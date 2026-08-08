@@ -5,24 +5,21 @@ running totals, and a flag when a team reaches 1000 and has to change their game
 
 Plain HTML, CSS and JavaScript. No build step, no framework, no backend.
 
-**Live:** https://gautam0998.github.io/Bukhara/ (once Pages is switched on, below)
+**Live:** https://gautam0998.github.io/Bukhara/
 
 Note the capital B. GitHub Pages URLs are case-sensitive in the path, and this repo
 is called `Bukhara`.
 
-## Turn on Pages
-
-The files are already here. One switch is left:
-
-**Settings** → **Pages** → under *Build and deployment*, set **Source** to
-*Deploy from a branch*, branch **main**, folder **/ (root)**. Save.
-
-Wait about a minute. The URL appears on that same page.
-
 That link is shareable - WhatsApp, anywhere. Anyone can open it, no account needed.
 
-Everything uses relative paths, so it works from a project subpath like `/Bukhara/`
-with no configuration.
+## How it is deployed
+
+Pages serves `main` from `/ (root)`. Every push rebuilds it; the run shows up under
+**Actions** as *pages build and deployment*, and takes about a minute. There is no
+build step, so what is in the repo is exactly what is served.
+
+Everything uses relative paths, which is why it works from a project subpath like
+`/Bukhara/` with no configuration.
 
 ## Install it on your phone
 
