@@ -144,7 +144,21 @@ h1{font-family:var(--display);font-weight:800;font-size:19px;letter-spacing:.22e
 .stat .v{font-family:var(--mono);font-size:15px;font-weight:600;display:flex;gap:9px;
   font-variant-numeric:tabular-nums;}
 .game{border-bottom:1px solid rgba(42,66,61,.55);padding:13px 0;}
-.gtop{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:9px;}
+.gtop{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:9px;}
+/* The whole heading is the expand target, so it is a wide, easy tap rather than
+   a small chevron. The date stays a separate control beside it. */
+.gopen{flex:1 1 auto;min-width:0;display:flex;align-items:center;gap:7px;
+  background:none;border:0;padding:0;color:inherit;font-family:inherit;
+  text-align:left;cursor:pointer;}
+.gchev{color:var(--dim);font-size:10px;line-height:1;display:inline-block;
+  transition:transform .18s ease;}
+.game.open .gchev{transform:rotate(180deg);}
+.gdetail{margin-top:12px;padding-top:2px;border-top:1px solid rgba(42,66,61,.55);}
+.gactions{display:flex;gap:8px;margin-top:14px;}
+/* Armed by the first tap of a two-tap action. Neutral for Reopen, which only
+   moves a game; orange for Delete, which ends one. */
+.btn.armed{background:var(--bone);border-color:var(--bone);color:var(--felt);font-weight:600;}
+.btn.warn.armed{background:var(--flag);border-color:var(--flag);color:var(--felt);}
 .bar-row{display:flex;align-items:center;gap:8px;margin-bottom:5px;}
 /* Who the bar belongs to. Each game keeps the names it was played under, so a
    card from before a rename still reads correctly. Capped at 42% and ellipsised
@@ -185,8 +199,8 @@ textarea:focus{border-color:var(--bone);color:var(--bone);}
    tab's background and the buttons' borders. The two bare inputs have no
    background to grow, so they take padding with the same amount pulled back off
    the margin, which leaves them exactly where they were. */
-.tab,.btn,.snap button,#bannerack,.score{position:relative;}
-.tab::after,.btn::after,.snap button::after,#bannerack::after,.score::after{
+.tab,.btn,.snap button,#bannerack,.score,.gopen{position:relative;}
+.tab::after,.btn::after,.snap button::after,#bannerack::after,.score::after,.gopen::after{
   content:'';position:absolute;left:0;right:0;top:50%;
   height:44px;transform:translateY(-50%);
 }
@@ -494,8 +508,17 @@ function renderGame(){
   $('rounds').innerHTML=html;
 }
 
+/* Which logged game is expanded, by id. History re-renders wholesale, so this
+   has to live outside it or the card would snap shut after every edit. */
+var openGame=null;
+function gameIndex(id){
+  for(var i=0;i<S.archive.length;i++) if(S.archive[i].id===id) return i;
+  return -1;
+}
+
 function renderHistory(){
   var el=$('view-history');
+  if(openGame!==null && gameIndex(openGame)<0) openGame=null;   // it was deleted
   if(S.archive.length===0){
     el.innerHTML='<div class="empty">No finished games yet.<br>Tap &ldquo;Finish &amp; log game&rdquo; when a game ends.</div>';
     return;
@@ -542,11 +565,15 @@ function renderHistory(){
   for(var i=S.archive.length-1;i>=0;i--){
     var g=S.archive[i], f=finals[i];
     var w = f[0]===f[1] ? -1 : (f[0]>f[1] ? 0 : 1);
-    h+='<div class="game"><div class="gtop"><span class="mono">Game '+(i+1)+' &middot; '+
-       g.rounds.length+(g.rounds.length===1?' round':' rounds')+'</span>'+
-       '<span><input type="date" class="dateinput" data-gdate="'+g.id+'" value="'+
-       (g.date||'')+'" aria-label="Date of game '+(i+1)+'">'+
-       '<button class="x" data-delgame="'+g.id+'" aria-label="Delete game '+(i+1)+'">&times;</button></span></div>';
+    var open = openGame===g.id;
+    var nR = g.rounds.length;
+    h+='<div class="game'+(open?' open':'')+'">'+
+       '<div class="gtop">'+
+       '<button class="gopen" data-open="'+g.id+'" aria-expanded="'+open+'">'+
+       '<span class="mono">Game '+(i+1)+' &middot; '+nR+(nR===1?' round':' rounds')+'</span>'+
+       '<span class="gchev" aria-hidden="true">&#9662;</span></button>'+
+       '<input type="date" class="dateinput" data-gdate="'+g.id+'" value="'+
+       (g.date||'')+'" aria-label="Date of game '+(i+1)+'"></div>';
     // The names this game was played under, not today's. A game logged as
     // "Ankit & Gautam" stays that way after the teams are renamed. Older entries
     // and hand-edited backups may not carry them, so fall back to the current pair.
@@ -558,6 +585,37 @@ function renderHistory(){
          ((f[t]/peak)*100)+'%;background:'+colorOf(t)+'"></div></div>'+
          '<span class="bval" style="color:'+colorOf(t)+'">'+f[t]+
          (w===t?'<span class="win">W</span>':'')+'</span></div>';
+    }
+
+    // Expanded: the same round table This game uses, editable the same way, then
+    // the two actions. Delete lives in here as a named button rather than the
+    // dim X it used to be, so it is unmistakable and one step away from a list tap.
+    if(open){
+      var gra=0, grb=0, grun=[];
+      for(var q=0;q<nR;q++){ gra+=g.rounds[q][0]; grb+=g.rounds[q][1]; grun.push([gra,grb]); }
+      h+='<div class="gdetail">';
+      if(nR===0){
+        h+='<div class="empty" style="padding:16px 8px">Every round of this game has been removed.</div>';
+      } else {
+        h+='<div class="thead"><span>Rd</span>'+
+           '<span style="color:var(--gold)">'+esc(gn[0])+'</span>'+
+           '<span style="color:var(--jade)">'+esc(gn[1])+'</span><span></span></div>';
+        for(var k2=nR-1;k2>=0;k2--){
+          h+='<div class="trow"><span class="rn">'+(k2+1)+'</span>';
+          for(var c2=0;c2<2;c2++){
+            h+='<div class="cell"><span class="score" data-gid="'+g.id+'" data-r="'+k2+'" data-t="'+c2+'" '+
+               'style="color:'+signColor(g.rounds[k2][c2])+'">'+fmtSigned(g.rounds[k2][c2])+
+               '<span class="run" style="color:'+signColor(grun[k2][c2],'var(--muted)')+'">'+
+               fmtSigned(grun[k2][c2])+'</span></span></div>';
+          }
+          h+='<button class="x" data-gdel="'+g.id+'" data-r="'+k2+
+             '" aria-label="Remove round '+(k2+1)+'">&times;</button></div>';
+        }
+      }
+      h+='<div class="gactions">'+
+         '<button class="btn" data-reopen="'+g.id+'">Reopen game</button>'+
+         '<button class="btn warn" data-delgame="'+g.id+'">Delete game</button>'+
+         '</div></div>';
     }
     h+='</div>';
   }
@@ -978,11 +1036,87 @@ $('view-history').addEventListener('change',function(e){
   for(var i=0;i<S.archive.length;i++){ if(S.archive[i].id===id){ S.archive[i].date=d.value; break; } }
   save(true); toast('Date updated');
 });
+/* Two-tap confirm for buttons History rebuilds on every render, so armConfirm's
+   bind-once approach cannot be used. Same feel: first tap relabels, and it
+   disarms itself after four seconds. */
+var armedBtn=null, armedTimer=null;
+function disarm(){
+  if(armedBtn && armedBtn.isConnected && armedBtn.dataset.orig!==undefined){
+    armedBtn.textContent=armedBtn.dataset.orig;
+    armedBtn.classList.remove('armed');
+  }
+  armedBtn=null; clearTimeout(armedTimer);
+}
+function twoTap(btn,label,run){
+  if(armedBtn===btn){ disarm(); run(); return; }
+  disarm();
+  armedBtn=btn; btn.dataset.orig=btn.textContent;
+  btn.textContent=label; btn.classList.add('armed');
+  armedTimer=setTimeout(disarm,4000);
+}
+
+/* Put a logged game back on the board. It carries its own date and names with
+   it, because it is that game being resumed, not a new one. */
+function reopenGame(id){
+  var gi=gameIndex(id); if(gi<0) return;
+  if(S.rounds.length){
+    toast('Log or discard the game on the board first');
+    return;
+  }
+  var g=S.archive[gi];
+  S.rounds=g.rounds.map(function(r){ return [r[0],r[1]]; });
+  S.date=g.date||todayISO();
+  if(g.names && g.names.length===2) S.names=g.names.slice();
+  S.acked=[false,false];
+  S.archive.splice(gi,1);
+  openGame=null;
+  save(true); renderAll(); showView('game');
+  toast('Back on the board');
+}
+
 $('view-history').addEventListener('click',function(e){
-  var b=e.target.closest('[data-delgame]'); if(!b) return;
-  var id=Number(b.dataset.delgame);
-  S.archive=S.archive.filter(function(g){ return g.id!==id; });
-  save(true); renderHistory(); renderGame();
+  var t=e.target;
+
+  var open=t.closest('[data-open]');
+  if(open){ var oid=Number(open.dataset.open);
+    disarm(); openGame = openGame===oid ? null : oid; renderHistory(); return; }
+
+  var re=t.closest('[data-reopen]');
+  if(re){ twoTap(re, S.rounds.length?'Board is not empty':'Tap again to reopen', function(){
+    reopenGame(Number(re.dataset.reopen)); }); return; }
+
+  var del=t.closest('[data-delgame]');
+  if(del){ var did=Number(del.dataset.delgame);
+    twoTap(del,'Tap again to delete',function(){
+      S.archive=S.archive.filter(function(g){ return g.id!==did; });
+      save(true); renderHistory(); renderGame(); toast('Game deleted');
+    }); return; }
+
+  var rd=t.closest('[data-gdel]');
+  if(rd){ var gi=gameIndex(Number(rd.dataset.gdel)); if(gi<0) return;
+    S.archive[gi].rounds.splice(Number(rd.dataset.r),1);
+    save(true); renderHistory(); return; }
+
+  // Inline score editing, the same gesture as This game.
+  var sc=t.closest('.score[data-gid]');
+  if(!sc) return;
+  var g2=gameIndex(Number(sc.dataset.gid)); if(g2<0) return;
+  var r2=Number(sc.dataset.r), c2=Number(sc.dataset.t);
+  var inp=document.createElement('input');
+  inp.className='cellin'; inp.type='number'; inp.inputMode='numeric';
+  inp.value=S.archive[g2].rounds[r2][c2];
+  inp.setAttribute('aria-label','Score for round '+(r2+1));
+  sc.replaceWith(inp); inp.focus(); inp.select();
+  function commit(){
+    var v=inp.value.trim()===''?0:parseInt(inp.value,10);
+    if(!isNaN(v)) S.archive[g2].rounds[r2][c2]=v;
+    save(true); renderHistory();
+  }
+  inp.addEventListener('blur',commit);
+  inp.addEventListener('keydown',function(e2){
+    if(e2.key==='Enter') inp.blur();
+    if(e2.key==='Escape'){ inp.removeEventListener('blur',commit); renderHistory(); }
+  });
 });
 $('snaps').addEventListener('click',function(e){
   var b=e.target.closest('[data-snap]'); if(!b) return;
