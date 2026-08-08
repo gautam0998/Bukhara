@@ -1,5 +1,5 @@
 // Bump this name whenever index.html changes, or phones keep serving the old copy.
-const CACHE='bukhara-v4';
+const CACHE='bukhara-v5';
 const ASSETS=['./','./index.html','./manifest.json','./icon-192.png','./icon-512.png','./icon-180.png'];
 self.addEventListener('install',e=>{
   e.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS)).then(()=>self.skipWaiting()));

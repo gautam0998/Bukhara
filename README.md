@@ -112,7 +112,7 @@ Everything is in `index.html`:
 - Team names: editable in the app, tap them.
 - Number of restore points: `var MAXSNAP = 20;`
 
-After editing, bump the cache name in `sw.js` (`bukhara-v4` → `bukhara-v5`) so phones
+After editing, bump the cache name in `sw.js` (`bukhara-v5` → `bukhara-v6`) so phones
 pick up the new version instead of serving the cached old one.
 
 ## Colours
