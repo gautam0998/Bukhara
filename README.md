@@ -85,6 +85,16 @@ Each game carries a date, defaulting to the day it was played. Tap the date on t
 panel to change it. Logged games have their own editable date in the History tab, useful
 when you record a game the morning after.
 
+## The two screens
+
+**Play** is the game in front of you and nothing else: the two names, the two totals,
+a rail each, and the round-by-round list. No chart, no statistics. The list is meant to
+be readable without scrolling past anything.
+
+**History** is where you go to look at things. The running-totals chart for the game
+currently on the board sits at the top under *This game*, then the series record,
+per-team stats, and past results.
+
 ## The rails
 
 The two bars under the team names are the app icon, made live. Each bar grows toward the

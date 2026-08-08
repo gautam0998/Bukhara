@@ -195,10 +195,7 @@ body[data-tab="play"] main{padding-bottom:calc(188px + var(--safe-b))}
   /* A ring of ground so the tick stays legible once a bar has run past it. */
   box-shadow:0 0 0 2px var(--bg);
 }
-.rail-note{
-  display:flex;justify-content:space-between;gap:12px;
-  margin-top:7px;font-size:12px;color:var(--ink-3);
-}
+.rail-note{margin-top:7px;font-size:12px;color:var(--ink-3)}
 
 /* ============================ SECTIONS ============================ */
 .sec{margin:0 0 26px}
@@ -473,7 +470,7 @@ body[data-tab="history"] .toast{bottom:calc(var(--safe-b) + 28px)}
             <span class="total" data-total="0">0</span>
           </div>
           <div class="rail"><div class="rail-track"><div class="rail-fill" data-fill="0"></div></div><i class="rail-tick"></i></div>
-          <div class="rail-note"><span data-note="0">1000 to go</span><span data-best="0"></span></div>
+          <div class="rail-note" data-note="0">1000 to go</div>
         </div>
         <div class="team" data-team="1">
           <div class="team-top">
@@ -482,17 +479,9 @@ body[data-tab="history"] .toast{bottom:calc(var(--safe-b) + 28px)}
             <span class="total" data-total="1">0</span>
           </div>
           <div class="rail"><div class="rail-track"><div class="rail-fill" data-fill="1"></div></div><i class="rail-tick"></i></div>
-          <div class="rail-note"><span data-note="1">1000 to go</span><span data-best="1"></span></div>
+          <div class="rail-note" data-note="1">1000 to go</div>
         </div>
       </div>
-
-      <section class="sec" id="chartSec">
-        <div class="sec-head">
-          <h2 class="sec-title">Running totals</h2>
-          <span class="sec-note" id="chartNote"></span>
-        </div>
-        <div class="chartwrap" id="chartWrap"></div>
-      </section>
 
       <section class="sec">
         <div class="sec-head">
@@ -703,7 +692,6 @@ var qa = function(sel, root){ return Array.prototype.slice.call((root || documen
 function render(){
   renderTeams();
   renderDock();
-  renderChart();
   renderRounds();
   renderHistory();
   el("dateLbl").textContent = fmtDate(S.date);
@@ -733,10 +721,6 @@ function renderTeams(){
     var note = q('[data-note="' + i + '"]');
     var gap = TARGET - t[i];
     note.textContent = gap > 0 ? gap + " to go" : "past 1000 by " + (-gap);
-
-    var best = bestRound(null, i);
-    q('[data-best="' + i + '"]').textContent =
-      (best === null || S.rounds.length === 0) ? "" : "best round " + best;
 
     q('[data-crossed="' + i + '"]').classList.toggle("hide", t[i] < TARGET);
   }
@@ -780,17 +764,14 @@ function chartGeom(a, b, w, h){
   };
 }
 
-function renderChart(){
-  var wrap = el("chartWrap");
+/* The chart lives on History, not on Play. Play is the game in front of you:
+   two totals and the rounds you have played. Reading the shape of the game is
+   a separate thing you go and look at.
+   The container is passed in, and must already be laid out: the SVG is built at
+   a measured pixel width so its stroke widths and labels are correct. */
+function drawChartInto(wrap){
   wrap.textContent = "";
-  var note = el("chartNote");
-
-  // One empty state per screen. Before the first round the rounds list already
-  // says what to do, so the chart section steps out of the way entirely rather
-  // than stacking a second dashed box on top of it.
-  el("chartSec").classList.toggle("hide", S.rounds.length === 0);
-  if (S.rounds.length === 0){ note.textContent = ""; return; }
-  note.textContent = S.rounds.length + (S.rounds.length === 1 ? " round" : " rounds");
+  if (S.rounds.length === 0) return;
 
   var w = wrap.clientWidth || 340;
   var h = 152;
@@ -971,10 +952,23 @@ function renderHistory(){
   var wrap = el("histWrap");
   wrap.textContent = "";
 
+  // The game on the board, drawn. It sits above the series because it is the
+  // one people will come here for mid-game.
+  if (S.rounds.length){
+    var live = section("This game", S.rounds.length + (S.rounds.length === 1 ? " round" : " rounds"));
+    var cw = document.createElement("div");
+    cw.className = "chartwrap";
+    live.appendChild(cw);
+    wrap.appendChild(live);
+    drawChartInto(cw);            // appended first, so clientWidth is real
+  }
+
   if (S.archive.length === 0){
     var e = document.createElement("div");
     e.className = "empty";
-    e.textContent = "Finished games land here. Log one from the menu when you are done.";
+    e.textContent = S.rounds.length
+      ? "Finished games land here too. Log this one from the menu when you are done."
+      : "Finished games land here. Log one from the menu when you are done.";
     wrap.appendChild(e);
     return;
   }
@@ -2022,8 +2016,9 @@ function setTab(name){
   el("panePlay").classList.toggle("hide", name !== "play");
   el("paneHist").classList.toggle("hide", name !== "history");
   el("dock").classList.toggle("hide", name !== "play");
-  // Re-render the pane being shown so its chart is measured at a real width.
-  if (name === "play") renderChart();
+  // A hidden pane has no width, so the chart has to be rebuilt once History is
+  // actually on screen or it renders against the 340px fallback.
+  if (name === "history") renderHistory();
   window.scrollTo(0, 0);
 }
 el("tabPlay").addEventListener("click", function(){ setTab("play"); });
@@ -2049,7 +2044,9 @@ el("filePick").addEventListener("change", function(){
 var rzT = null;
 window.addEventListener("resize", function(){
   clearTimeout(rzT);
-  rzT = setTimeout(function(){ if (document.body.getAttribute("data-tab") === "play") renderChart(); }, 150);
+  rzT = setTimeout(function(){
+    if (document.body.getAttribute("data-tab") === "history") renderHistory();
+  }, 150);
 });
 
 /* ============================ BOOT ============================ */
