@@ -21,8 +21,8 @@ Wait about a minute. The URL appears on that same page.
 
 That link is shareable - WhatsApp, anywhere. Anyone can open it, no account needed.
 
-Everything is served from the repo root with relative paths, so it works from a
-project subpath like `/Bukhara/` without any configuration.
+Everything uses relative paths, so it works from a project subpath like `/Bukhara/`
+with no configuration.
 
 ## Install it on your phone
 
@@ -30,6 +30,13 @@ Open the URL in Safari → Share → **Add to Home Screen**. It launches fullscr
 no browser chrome and works offline, including at a table with no signal.
 
 Chrome on Android offers **Install app** in the menu.
+
+⚠️ **Offline needs all six files present.** `sw.js` installs by calling
+`cache.addAll(ASSETS)`, and that call rejects as a whole if a single file 404s, which
+silently means no service worker and no offline at all. `icon-512.png` is on that list,
+so it has to exist even though nothing on the page displays it. Verified: serving the
+app without it leaves zero caches and no registration; with it, six entries and an
+active worker.
 
 ## How scores are stored
 
@@ -44,8 +51,8 @@ such as Supabase.
 
 These are two different jobs and the app treats them separately.
 
-**Sharing** uses **Share scoreboard image**, which draws a PNG poster: both totals with
-their rails, a running-totals chart, the round-by-round table, and - once games are
+**Sharing** uses **Share scoreboard image**, which draws a PNG poster: both team cards
+with their rails, a running-totals chart, the round-by-round table, and - once games are
 logged - the series record, per-team stats, and past results.
 Photos appear straight in a WhatsApp chat, so nobody has to tap or open anything. On a
 phone this opens the share sheet directly; on a desktop it downloads the image.
@@ -55,14 +62,14 @@ anything hidden inside the file is destroyed. Never treat a screenshot as a back
 
 ## Backup
 
+Everything below lives in the **Backup** tab.
+
 | | What it does | Survives |
 |---|---|---|
 | **Download backup file** | Saves a `.json` file. On iPhone, save to Files or send it to yourself. | A lost or wiped phone |
 | **Load a file** | Reads a backup file back in | - |
 | **Restore points** | The last 20 states, kept automatically | Accidental deletes and bad edits |
 | **Copy & paste** | Backup as text | Moving between devices quickly |
-
-All of it lives under **Backup and restore** in the ⋯ menu.
 
 Restore points are stored on the same device, so they don't protect against losing the
 phone. Download a file every so often - the status line reminds you after a month.
@@ -85,46 +92,37 @@ Each game carries a date, defaulting to the day it was played. Tap the date on t
 panel to change it. Logged games have their own editable date in the History tab, useful
 when you record a game the morning after.
 
-## The two screens
+## Typefaces
 
-**Play** is the game in front of you and nothing else: the two names, the two totals,
-a rail each, and the round-by-round list. No chart, no statistics. The list is meant to
-be readable without scrolling past anything.
-
-**History** is where you go to look at things. The running-totals chart for the game
-currently on the board sits at the top under *This game*, then the series record,
-per-team stats, and past results.
-
-## The rails
-
-The two bars under the team names are the app icon, made live. Each bar grows toward the
-orange 1000 line, which sits at 70% of the track so there is visible room to overshoot.
-A team past the line keeps a "Changed game" tag until a penalty drags them back under.
+Bricolage Grotesque for the wordmark, IBM Plex Sans for text, IBM Plex Mono for every
+number. Loaded from Google Fonts with `display=swap`, so a cold offline start falls back
+to the system stack rather than showing nothing. The service worker caches the font files
+after the first online visit, which is why its fetch handler stores opaque cross-origin
+responses as well as same-origin ones.
 
 ## Changing the rules
 
 Everything is in `index.html`:
 
 - Target score: `var TARGET = 1000;` near the top of the script.
-- Where the 1000 line sits on the rail: `var RAIL_TICK = 0.70;`
-- Share image width: `var W = 1080` inside `drawCard()`.
+- Share image width: `var W=1080` inside `drawCard()`.
 - Past games shown on the share image: `arch.slice(-6)` in `drawCard()`.
 - Team names: editable in the app, tap them.
 - Number of restore points: `var MAXSNAP = 20;`
 
-After editing, bump the cache name in `sw.js` (`bukhara-v5` → `bukhara-v6`) so phones
+After editing, bump the cache name in `sw.js` (`bukhara-v6` → `bukhara-v7`) so phones
 pick up the new version instead of serving the cached old one.
 
 ## Colours
 
-Four, all taken from the icon so the home-screen tile and the app are the same object.
+Taken from the app icon, so the home-screen tile and the app are the same object.
 
 | | | |
 |---|---|---|
-| `#0E1A18` | ground | the dark green everything sits on |
-| `#E8B04B` | amber | team one |
-| `#57C4B0` | teal | team two |
-| `#E8734A` | orange | the 1000 line, and every negative number |
+| `#0E1A18` | felt | the dark green everything sits on |
+| `#E8B04B` | gold | team one |
+| `#57C4B0` | jade | team two |
+| `#E8734A` | flag | reaching 1000, and every negative number |
 
-Team one and team two stay distinguishable under protanopia and deuteranopia, and each
-line on the chart is labelled with its own total, so nothing depends on colour alone.
+Gold and jade stay distinguishable under protanopia and deuteranopia, and both carry a
+name label beside them, so nothing depends on colour alone.
