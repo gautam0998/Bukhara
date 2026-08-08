@@ -539,7 +539,11 @@ function renderHistory(){
   }
   var s0=stat(0), s1=stat(1);
   var peak=Math.max.apply(null,finals.reduce(function(a,f){return a.concat(f);},[TARGET]));
-  var nm=S.archive[S.archive.length-1].names||S.names;
+  // The current names, not the last game's. This card counts wins across every
+  // game, so labelling it with whichever pair happened to be logged most
+  // recently was wrong the moment a team was renamed. Team one is always team
+  // one. The share image already names this card the same way.
+  var nm=S.names;
 
   var h='<div class="record"><div class="wl">'+
     '<span style="color:var(--gold)">'+wins[0]+'</span><span class="sep">&mdash;</span>'+
