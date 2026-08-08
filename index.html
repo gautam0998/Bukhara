@@ -16,7 +16,11 @@
 <style>
 :root{
   --felt:#0E1A18; --surface:#162623; --surface2:#1B302B; --line:#2A423D;
-  --bone:#EDE7DA; --muted:#8AA49D; --dim:#4C6560;
+  /* --dim was #4C6560, which measured 2.83:1 on the felt and failed even the
+     3:1 large-text floor. It carries the score placeholder, the round delete X
+     and the 1000 tick, so all three were barely there. 4.77:1, still clearly
+     quieter than --muted. */
+  --bone:#EDE7DA; --muted:#8AA49D; --dim:#6E8A84;
   --gold:#E8B04B; --jade:#57C4B0; --flag:#E8734A;
   --mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
   --sans:'IBM Plex Sans',system-ui,-apple-system,'Segoe UI',sans-serif;
@@ -57,7 +61,11 @@ h1{font-family:var(--display);font-weight:800;font-size:19px;letter-spacing:.22e
   letter-spacing:-.03em;font-variant-numeric:tabular-nums;}
 .rail{height:4px;background:var(--surface2);border-radius:3px;margin-top:12px;position:relative;}
 .fill{height:100%;border-radius:3px;transition:width .5s cubic-bezier(.22,1,.36,1);}
-.mark{position:absolute;top:-4px;bottom:-4px;width:2px;background:var(--line);border-radius:1px;}
+/* The 1000 tick. It used to be --line, which is 1.29:1 against the rail track:
+   invisible right up until a team crossed, at which point it turned orange. The
+   marker showing how far you have to go was only visible once you no longer
+   needed it. 3.74:1 now, which clears the 3:1 bar for a graphical marker. */
+.mark{position:absolute;top:-4px;bottom:-4px;width:2px;background:var(--dim);border-radius:1px;}
 .mark.lit{background:var(--flag);}
 .cfoot{display:flex;justify-content:space-between;margin-top:9px;font-family:var(--mono);
   font-size:10.5px;color:var(--muted);letter-spacing:.05em;}
@@ -163,6 +171,32 @@ textarea:focus{border-color:var(--bone);color:var(--bone);}
 .hidden{display:none !important;}
 :focus-visible{outline:2px solid var(--bone);outline-offset:2px;}
 @media (prefers-reduced-motion:reduce){*{transition:none !important;}}
+
+/* ---- touch targets ----------------------------------------------------------
+   Measured at 390px: the tabs were 33px tall, the buttons 39px, the Restore
+   buttons 26px and the round delete X 29px. All under the 44px a thumb needs.
+   Nothing here changes what is painted. Buttons get an invisible overlay that
+   grows only the hit region, because padding on these would grow the selected
+   tab's background and the buttons' borders. The two bare inputs have no
+   background to grow, so they take padding with the same amount pulled back off
+   the margin, which leaves them exactly where they were. */
+.tab,.btn,.snap button,#bannerack,.score{position:relative;}
+.tab::after,.btn::after,.snap button::after,#bannerack::after,.score::after{
+  content:'';position:absolute;left:0;right:0;top:50%;
+  height:44px;transform:translateY(-50%);
+}
+/* The delete X sits in a 26px grid column at the right edge of the row. It
+   reaches right into the body padding, where there is nothing to hit by
+   mistake, but only 4px left into the 8px gutter, so enlarging it cannot start
+   swallowing taps meant for the score next to it. */
+.x{position:relative;}
+.x::after{content:'';position:absolute;left:-4px;right:-16px;top:50%;
+  height:44px;transform:translateY(-50%);}
+.tname{padding:15px 0;margin:-15px 0 -7px;}
+/* The date sits directly above the score labels, so its grown box overlaps them.
+   They are plain text, not controls, so lifting the input above them costs
+   nothing and stops the bottom of its target being swallowed. */
+.dateinput{padding:15px 0;margin:-15px 0;position:relative;z-index:1;}
 </style>
 </head>
 <body>
@@ -588,7 +622,7 @@ function download(){
 
 /* ---------------- share image ---------------- */
 var C={felt:'#0E1A18',surface:'#162623',surface2:'#1B302B',line:'#2A423D',
-       bone:'#EDE7DA',muted:'#8AA49D',dim:'#4C6560',gold:'#E8B04B',jade:'#57C4B0',flag:'#E8734A'};
+       bone:'#EDE7DA',muted:'#8AA49D',dim:'#6E8A84',gold:'#E8B04B',jade:'#57C4B0',flag:'#E8734A'};
 
 function rr(x,c,y,w,h,r){
   x.beginPath();
@@ -608,9 +642,11 @@ function drawCard(){
   var ra=0,rb=0,run=[];
   for(var j=0;j<rounds.length;j++){ ra+=rounds[j][0]; rb+=rounds[j][1]; run.push([ra,rb]); }
 
-  var shownGames = arch.slice(-6);
-
   // ---- layout pass ----
+  // The poster is about the game just played: the two cards, how it swung, and
+  // every round. The only thing carried over from the series is the win record,
+  // one line of context. The four stat boxes and the last-six-games list used to
+  // sit here and made the picture roughly twice as tall as the game deserved.
   var y=150;
   var teamY=y; y+=280+52;
   var chartY=null, chartH=300;
@@ -618,10 +654,7 @@ function drawCard(){
   var tableY=null, tableH=0;
   if(rounds.length){ tableY=y; tableH=48+rounds.length*84; y+=tableH+52; }
   var serY=null, serH=0;
-  if(arch.length){
-    serY=y; serH = 40+120+18+130+ (shownGames.length? 34+shownGames.length*86 : 0);
-    y+=serH+40;
-  }
+  if(arch.length){ serY=y; serH=40+120; y+=serH+40; }
   var H=y+80;
 
   var cv=document.createElement('canvas');
@@ -664,7 +697,9 @@ function drawCard(){
     x.fillStyle=C.surface2; rr(x,cx+32,ry,rw,9,5); x.fill();
     var fw=Math.max(0,Math.min(1,totals[t]/scale))*rw;
     if(fw>0){ x.fillStyle=col; rr(x,cx+32,ry,fw,9,5); x.fill(); }
-    x.fillStyle=hits[t]!==null?C.flag:C.line;
+    // Same fix as the rail on screen: C.line is 1.29:1 against the track, so the
+    // marker was invisible until it stopped mattering.
+    x.fillStyle=hits[t]!==null?C.flag:C.dim;
     x.fillRect(cx+32+(TARGET/scale)*rw,ry-7,4,23);
 
     x.font="500 22px "+MONO;
@@ -745,23 +780,18 @@ function drawCard(){
     }
   }
 
-  // ---- series + stats ----
+  // ---- series record ----
   if(serY!==null){
     var finals=arch.map(function(g){ return [sum(g.rounds,0),sum(g.rounds,1)]; });
     var wins=[0,0], ties=0;
     finals.forEach(function(f){ if(f[0]>f[1]) wins[0]++; else if(f[1]>f[0]) wins[1]++; else ties++; });
-    var all=[]; arch.forEach(function(g){ all=all.concat(g.rounds); });
-    function st(t3){
-      var v=all.map(function(r){return r[t3]||0;});
-      return { avg:v.length?Math.round(v.reduce(function(m,n){return m+n;},0)/v.length):0,
-               best:v.length?Math.max.apply(null,v):0,
-               fin:Math.round(finals.reduce(function(m,f){return m+f[t3];},0)/finals.length),
-               hit:finals.filter(function(f){return f[t3]>=TARGET;}).length };
-    }
-    var A=st(0), B=st(1), yy2=serY;
+    var yy2=serY;
 
+    // Draws go in the label. Without them a 2-2 record across five games reads
+    // as though a game went missing.
     x.fillStyle=C.muted; x.font="500 20px "+MONO;
-    x.fillText('SERIES \u00b7 '+arch.length+' GAME'+(arch.length===1?'':'S'),P,yy2+20);
+    x.fillText('SERIES \u00b7 '+arch.length+' GAME'+(arch.length===1?'':'S')+
+               (ties?' \u00b7 '+ties+' TIED':''),P,yy2+20);
     yy2+=40;
 
     x.fillStyle=C.surface; rr(x,P,yy2,W-P*2,120,20); x.fill();
@@ -775,41 +805,6 @@ function drawCard(){
     x.textAlign='right'; x.fillStyle=C.jade;
     x.fillText(fit(S.names[1],300,"500 22px "+SANS),W-P-28,yy2+72);
     x.textAlign='left';
-    yy2+=120+18;
-
-    var labels=['AVG / ROUND','BEST ROUND','AVG FINAL','HIT 1000'];
-    var pairs=[[A.avg,B.avg],[A.best,B.best],[A.fin,B.fin],[A.hit,B.hit]];
-    var bw=(W-P*2-24*3)/4;
-    for(var q2=0;q2<4;q2++){
-      var bx=P+q2*(bw+24);
-      x.fillStyle=C.surface; rr(x,bx,yy2,bw,130,18); x.fill();
-      x.strokeStyle=C.line; x.lineWidth=2; rr(x,bx,yy2,bw,130,18); x.stroke();
-      x.fillStyle=C.muted; x.font="500 17px "+MONO; x.fillText(labels[q2],bx+18,yy2+34);
-      x.font="600 34px "+MONO;
-      x.fillStyle=C.gold; x.fillText(String(pairs[q2][0]),bx+18,yy2+80);
-      x.fillStyle=C.jade; x.fillText(String(pairs[q2][1]),bx+18,yy2+116);
-    }
-    yy2+=130;
-
-    if(shownGames.length){
-      yy2+=34;
-      var peak=Math.max.apply(null,finals.reduce(function(m,f){return m.concat(f);},[TARGET]));
-      for(var g2=0;g2<shownGames.length;g2++){
-        var G=shownGames[g2], f2=[sum(G.rounds,0),sum(G.rounds,1)];
-        var wn=f2[0]===f2[1]?-1:(f2[0]>f2[1]?0:1);
-        x.fillStyle=C.muted; x.font="500 19px "+MONO;
-        x.fillText(dateLabel(G.date)+'  \u00b7  '+G.rounds.length+' rounds',P,yy2+16);
-        for(var t4=0;t4<2;t4++){
-          var by=yy2+30+t4*22, bwid=W-P*2-140;
-          x.fillStyle=C.surface2; rr(x,P,by,bwid,14,4); x.fill();
-          x.fillStyle=t4===0?C.gold:C.jade;
-          rr(x,P,by,Math.max(4,(Math.max(0,f2[t4])/peak)*bwid),14,4); x.fill();
-          x.textAlign='right'; x.font="500 20px "+MONO;
-          x.fillText(fmtSigned(f2[t4])+(wn===t4?'  W':''),W-P,by+13); x.textAlign='left';
-        }
-        yy2+=86;
-      }
-    }
   }
 
   x.fillStyle=C.dim||C.muted; x.font="500 20px "+MONO;

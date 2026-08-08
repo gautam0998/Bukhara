@@ -51,9 +51,9 @@ such as Supabase.
 
 These are two different jobs and the app treats them separately.
 
-**Sharing** uses **Share scoreboard image**, which draws a PNG poster: both team cards
-with their rails, a running-totals chart, the round-by-round table, and - once games are
-logged - the series record, per-team stats, and past results.
+**Sharing** uses **Share scoreboard image**, which draws a PNG poster of the game just
+played: both team cards with their rails, a running-totals chart, and the round-by-round
+table. Once games are logged it also carries the series win record, one line of context.
 Photos appear straight in a WhatsApp chat, so nobody has to tap or open anything. On a
 phone this opens the share sheet directly; on a desktop it downloads the image.
 
@@ -106,12 +106,15 @@ Everything is in `index.html`:
 
 - Target score: `var TARGET = 1000;` near the top of the script.
 - Share image width: `var W=1080` inside `drawCard()`.
-- Past games shown on the share image: `arch.slice(-6)` in `drawCard()`.
 - Team names: editable in the app, tap them.
 - Number of restore points: `var MAXSNAP = 20;`
 
-After editing, bump the cache name in `sw.js` (`bukhara-v6` → `bukhara-v7`) so phones
+After editing, bump the cache name in `sw.js` (`bukhara-v7` → `bukhara-v8`) so phones
 pick up the new version instead of serving the cached old one.
+
+The poster used to end with four stat boxes and the last six games, controlled by
+`arch.slice(-6)`. Both are gone: the picture is about the game just played, and the
+series win record is the only carry-over. That knob no longer exists.
 
 ## Colours
 
