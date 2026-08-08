@@ -1,0 +1,2079 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Bukhara Scores</title>
+<meta name="description" content="A scorekeeper for the card game Bukhara. Two teams, one score each per round, running totals, and a flag at 1000.">
+
+<!-- PWA -->
+<link rel="manifest" href="./manifest.json">
+<meta name="theme-color" content="#0E1A18">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Bukhara">
+<link rel="apple-touch-icon" href="./icon-180.png">
+<link rel="icon" href="./icon-192.png">
+
+<style>
+/* ===========================================================================
+   TOKENS
+   The four brand colours are lifted straight out of the app icon, so the
+   home-screen tile and the app itself are the same object:
+     #0E1A18 ground   #E8B04B team one   #57C4B0 team two   #E8734A target/negative
+   Contrast against the ground, measured: ink 15.5:1, ink-2 8.9:1, ink-3 5.3:1,
+   amber 9.1:1, teal 8.4:1, orange 5.9:1. All clear WCAG AA for body text.
+   =========================================================================== */
+:root{
+  --bg:#0E1A18;          /* ground: a dark, desaturated green. Never pure black. */
+  --panel:#14211E;       /* raised well (the entry dock, sheets) */
+  --panel-2:#1B2A26;     /* inset within a panel (input fields) */
+  --line:rgba(233,241,238,.09);
+  --line-2:rgba(233,241,238,.16);
+
+  --ink:#E9F1EE;         /* primary text */
+  --ink-2:#A8BCB6;       /* secondary text */
+  --ink-3:#7C918C;       /* muted text, still AA for body */
+  --ink-4:#768A85;       /* dimmest legible tier: 4.9:1, still AA for body */
+
+  --a:#E8B04B;           /* team one */
+  --b:#57C4B0;           /* team two */
+  --warn:#E8734A;        /* the 1000 line, and every negative number */
+
+  --a-soft:rgba(232,176,75,.16);
+  --b-soft:rgba(87,196,176,.16);
+  --warn-soft:rgba(232,115,74,.14);
+
+  /* Shape lock: one radius system, used everywhere. */
+  --r-field:12px;
+  --r-panel:16px;
+  --r-sheet:20px;
+  --r-pill:999px;
+
+  /* Motion. Exponential ease-out only: starts fast, so the UI answers the
+     moment you touch it. No bounce, no elastic, nothing over 300ms. */
+  --ease:cubic-bezier(0.23,1,0.32,1);
+  --t-press:120ms;
+  --t-ui:180ms;
+  --t-sheet:260ms;
+
+  /* Semantic z-index scale. No arbitrary 999s. */
+  --z-rail:1;
+  --z-sticky:10;
+  --z-dock:20;
+  --z-sheet:30;
+  --z-toast:40;
+
+  --safe-b:env(safe-area-inset-bottom,0px);
+  --safe-t:env(safe-area-inset-top,0px);
+}
+
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0;
+  min-height:100dvh;                 /* never 100vh: iOS chrome makes it jump */
+  background:var(--bg);
+  color:var(--ink);
+  font:400 15px/1.45 ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  font-variant-numeric:tabular-nums; /* digits never reflow as scores change */
+  -webkit-tap-highlight-color:transparent;
+  overscroll-behavior-y:none;
+}
+button,input,select,textarea{font:inherit;color:inherit}
+button{background:none;border:0;padding:0;cursor:pointer;font-variant-numeric:inherit}
+:focus{outline:none}
+:focus-visible{outline:2px solid var(--ink-2);outline-offset:2px;border-radius:4px}
+.hide{display:none !important}
+.sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+
+/* Every pressable answers the finger. */
+.press{transition:transform var(--t-press) var(--ease),background-color var(--t-ui) var(--ease),color var(--t-ui) var(--ease),border-color var(--t-ui) var(--ease)}
+.press:active{transform:scale(.97)}
+
+/* ============================ APP FRAME ============================ */
+.app{max-width:560px;margin:0 auto;padding:0 16px}
+
+header{
+  position:sticky;top:0;z-index:var(--z-sticky);
+  background:linear-gradient(var(--bg) 74%,rgba(14,26,24,0));
+  padding-top:calc(var(--safe-t) + 10px);
+}
+/* Everything a thumb touches is a real 44px box. */
+.bar{display:flex;align-items:center;gap:8px;height:52px}
+.mark{flex:none;width:22px;height:22px;display:block}
+.wordmark{font-size:17px;font-weight:640;letter-spacing:-.012em;margin-right:auto;padding-left:2px}
+.iconbtn{
+  flex:none;width:44px;height:44px;display:grid;place-items:center;border-radius:var(--r-pill);
+  color:var(--ink-2);
+}
+@media (hover:hover) and (pointer:fine){ .iconbtn:hover{background:var(--panel-2);color:var(--ink)} }
+.datebtn{
+  flex:none;height:44px;padding:0 15px;border-radius:var(--r-pill);
+  background:var(--panel-2);color:var(--ink-2);font-size:13px;font-weight:560;
+  white-space:nowrap;
+}
+@media (hover:hover) and (pointer:fine){ .datebtn:hover{color:var(--ink)} }
+
+/* Segmented control. Two destinations do not deserve a permanent bottom bar,
+   and the thumb needs the bottom of the screen for the score entry. */
+.seg{
+  position:relative;display:grid;grid-template-columns:1fr 1fr;gap:2px;
+  background:var(--panel);border-radius:var(--r-pill);padding:3px;margin:2px 0 16px;
+}
+.seg::before{
+  content:"";position:absolute;inset:3px 50% 3px 3px;border-radius:var(--r-pill);
+  background:var(--panel-2);box-shadow:inset 0 0 0 1px var(--line);
+  transition:transform var(--t-ui) var(--ease);
+}
+.seg[data-tab="history"]::before{transform:translateX(calc(100% + 2px))}
+.seg button{
+  position:relative;height:44px;border-radius:var(--r-pill);
+  font-size:14px;font-weight:560;color:var(--ink-3);
+  transition:color var(--t-ui) var(--ease);
+}
+.seg button[aria-selected="true"]{color:var(--ink)}
+
+main{padding-bottom:24px}
+/* Room for the fixed entry dock, so the last table row is never trapped under it. */
+body[data-tab="play"] main{padding-bottom:calc(188px + var(--safe-b))}
+
+.pane{animation:pane 180ms var(--ease) both}
+@keyframes pane{from{opacity:0}to{opacity:1}}
+
+/* ============================ TEAM ROWS ============================ */
+/* No cards here. Two rows, generous space, one hairline between them. */
+.teams{margin:0 0 22px}
+.team{padding:14px 0}
+.team + .team{border-top:1px solid var(--line)}
+.team-top{display:flex;align-items:baseline;gap:10px}
+.team-name{
+  flex:1 1 auto;min-width:0;
+  font-size:15px;font-weight:560;color:var(--ink-2);
+  text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  border-radius:6px;
+  /* The text is 22px tall. Pad the hit area out to 44px and pull the same
+     amount back off the margin, so the target is thumb-sized while the row
+     keeps its baseline. */
+  padding:11px 0;margin:-11px 0;
+  /* A quiet, permanent affordance: this text is editable. */
+  text-decoration:underline dotted var(--ink-4);
+  text-underline-offset:4px;
+  transition:color var(--t-ui) var(--ease),text-decoration-color var(--t-ui) var(--ease);
+}
+@media (hover:hover) and (pointer:fine){ .team-name:hover{color:var(--ink);text-decoration-color:var(--ink-2)} }
+.crossed{
+  flex:none;font-size:11px;font-weight:640;letter-spacing:.01em;
+  color:var(--warn);background:var(--warn-soft);
+  padding:3px 8px;border-radius:var(--r-pill);
+}
+.total{
+  flex:none;font-size:40px;font-weight:680;letter-spacing:-.025em;line-height:1;
+  font-variant-numeric:tabular-nums;
+}
+.total.neg{color:var(--warn)}
+
+/* The rail is the icon, made live: a bar growing toward the 1000 line.
+   The scale is fixed so the tick always sits at 70%, which leaves visible
+   headroom for a team that overshoots. */
+.rail{position:relative;height:10px;margin-top:11px}
+/* The track clips the fill, so scaling the fill never distorts a corner radius.
+   The tick lives outside the track and can therefore overhang the rail. */
+.rail-track{
+  position:absolute;inset:0;overflow:hidden;
+  background:var(--panel-2);border-radius:var(--r-pill);z-index:var(--z-rail);
+}
+.rail-fill{
+  position:absolute;inset:0;transform-origin:left center;transform:scaleX(0);
+  transition:transform 420ms var(--ease);
+}
+.team[data-team="0"] .rail-fill{background:var(--a)}
+.team[data-team="1"] .rail-fill{background:var(--b)}
+.rail-tick{
+  position:absolute;top:-4px;bottom:-4px;left:70%;width:3px;margin-left:-1.5px;
+  background:var(--warn);border-radius:2px;z-index:calc(var(--z-rail) + 1);
+  /* A ring of ground so the tick stays legible once a bar has run past it. */
+  box-shadow:0 0 0 2px var(--bg);
+}
+.rail-note{
+  display:flex;justify-content:space-between;gap:12px;
+  margin-top:7px;font-size:12px;color:var(--ink-3);
+}
+
+/* ============================ SECTIONS ============================ */
+.sec{margin:0 0 26px}
+.sec-head{display:flex;align-items:baseline;gap:10px;margin:0 0 12px}
+.sec-title{font-size:13px;font-weight:620;color:var(--ink-3);margin:0}
+.sec-note{margin-left:auto;font-size:12px;color:var(--ink-4)}
+
+.empty{
+  padding:22px 16px;text-align:center;color:var(--ink-3);font-size:14px;
+  border:1px dashed var(--line-2);border-radius:var(--r-panel);
+}
+
+/* ============================ CHART ============================ */
+.chartwrap{position:relative;width:100%}
+.chart{display:block;width:100%;overflow:visible}
+.chart .grid{stroke:var(--line);stroke-width:1}
+.chart .axis{fill:var(--ink-4);font-size:11px;font-variant-numeric:tabular-nums}
+.chart .tgt{stroke:var(--warn);stroke-width:1.5;stroke-dasharray:2 5;stroke-linecap:round;opacity:.9}
+.chart .tgt-l{fill:var(--warn);font-size:11px;font-weight:600}
+.chart .ln{fill:none;stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+.chart .dot{stroke:var(--bg);stroke-width:2}      /* 2px ground ring keeps ends legible where lines cross */
+.chart .endl{font-size:11px;font-weight:640}
+
+/* ============================ ROUND TABLE ============================ */
+.rt{width:100%;border-collapse:collapse}
+.rt th{
+  font-size:11px;font-weight:600;color:var(--ink-4);text-align:right;
+  padding:0 0 8px;border-bottom:1px solid var(--line);
+}
+.rt th:first-child{text-align:left}
+.rt td{padding:0;border-bottom:1px solid var(--line)}
+.rt tr:last-child td{border-bottom:0}
+.rt .rowbtn{
+  display:grid;grid-template-columns:34px 1fr 1fr;align-items:center;
+  width:100%;padding:11px 0;text-align:right;border-radius:8px;
+}
+.rt .rowbtn > :first-child{text-align:left;color:var(--ink-4);font-size:13px}
+@media (hover:hover) and (pointer:fine){ .rt .rowbtn:hover{background:var(--panel)} }
+.cell{display:flex;align-items:baseline;justify-content:flex-end;gap:9px}
+.d{font-size:15px;font-weight:600;min-width:3.4em}
+.d.neg{color:var(--warn)}
+.d.zero{color:var(--ink-3)}
+.run{font-size:12px;color:var(--ink-4);min-width:3.2em}
+.run.neg{color:var(--warn)}          /* a running total below zero is orange too */
+.hA{color:var(--a)}
+.hB{color:var(--b)}
+
+/* ============================ ENTRY DOCK ============================ */
+/* Fixed to the bottom: the one thing you do dozens of times a night should
+   never require a scroll to reach. */
+.dock{
+  position:fixed;left:0;right:0;bottom:0;z-index:var(--z-dock);
+  padding:12px 16px calc(12px + var(--safe-b));
+  background:rgba(14,26,24,.92);
+  backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+  border-top:1px solid var(--line);
+}
+@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){
+  .dock{background:var(--bg)}
+}
+.dock-in{max-width:560px;margin:0 auto}
+.dock-head{display:flex;align-items:baseline;margin:0 0 9px}
+.dock-title{font-size:13px;font-weight:620;color:var(--ink-3)}
+.dock-hint{margin-left:auto;font-size:12px;color:var(--ink-4)}
+.fields{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.scorefield{
+  display:grid;grid-template-columns:46px 1fr;align-items:stretch;
+  background:var(--panel-2);border:1px solid var(--line);border-radius:var(--r-field);
+  overflow:hidden;height:52px;
+  transition:border-color var(--t-ui) var(--ease);
+}
+.scorefield:focus-within{border-color:var(--line-2)}
+.sign{
+  display:grid;place-items:center;
+  border-right:1px solid var(--line);
+  font-size:19px;font-weight:600;color:var(--ink-3);line-height:1;
+  transition:color var(--t-ui) var(--ease),background-color var(--t-ui) var(--ease);
+}
+.num{
+  width:100%;min-width:0;height:100%;padding:0 12px;
+  background:none;border:0;
+  font-size:19px;font-weight:620;text-align:right;    /* 16px+ stops iOS zoom-on-focus */
+  font-variant-numeric:tabular-nums;
+}
+.num::placeholder{color:var(--ink-3)}
+.num::-webkit-outer-spin-button,.num::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.scorefield[data-sign="-"]{border-color:rgba(232,115,74,.42)}
+.scorefield[data-sign="-"] .sign{color:var(--warn);background:var(--warn-soft)}
+.scorefield[data-sign="-"] .num{color:var(--warn)}
+.field-cap{
+  display:block;margin:0 0 6px;font-size:12px;font-weight:560;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.cap0{color:var(--a)} .cap1{color:var(--b)}
+
+.btn{
+  display:flex;align-items:center;justify-content:center;gap:8px;
+  height:50px;width:100%;border-radius:var(--r-field);
+  font-size:16px;font-weight:640;
+}
+.btn-primary{background:var(--ink);color:var(--bg)}
+.btn-primary[disabled]{background:var(--panel-2);color:var(--ink-4);cursor:default;transform:none}
+.btn-quiet{background:var(--panel-2);color:var(--ink);border:1px solid var(--line)}
+.btn-warn{background:var(--panel-2);color:var(--warn);border:1px solid rgba(232,115,74,.35)}
+.btn-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.add-wrap{margin-top:10px}
+
+/* ============================ HISTORY ============================ */
+.record{display:flex;align-items:center;gap:14px;margin:0 0 8px}
+.record-score{font-size:38px;font-weight:680;letter-spacing:-.02em;line-height:1;display:flex;align-items:baseline;gap:8px}
+.record-sep{color:var(--ink-4);font-size:26px;font-weight:400}
+.record-lbl{font-size:12px;color:var(--ink-3);line-height:1.35}
+
+.stats{width:100%;border-collapse:collapse}
+.stats th{font-size:11px;font-weight:600;color:var(--ink-4);padding:0 0 8px;text-align:right;border-bottom:1px solid var(--line)}
+.stats th:first-child{text-align:left}
+.stats td{padding:10px 0;text-align:right;border-bottom:1px solid var(--line);font-size:15px;font-weight:560}
+.stats td:first-child{text-align:left;font-size:13px;font-weight:400;color:var(--ink-3)}
+.stats tr:last-child td{border-bottom:0}
+
+/* Label left, number right, the same way the team rows and the stats table
+   read. The score is the thing being compared, so it stays in one column. */
+.game{
+  display:flex;align-items:center;justify-content:space-between;gap:14px;
+  width:100%;padding:13px 0;text-align:left;border-bottom:1px solid var(--line);border-radius:8px;
+}
+.game:last-child{border-bottom:0}
+@media (hover:hover) and (pointer:fine){ .game:hover{background:var(--panel)} }
+.game-when{display:flex;flex-direction:column;gap:3px;min-width:0}
+.game-date{font-size:14px;font-weight:560;white-space:nowrap}
+.game-meta{font-size:12px;color:var(--ink-4)}
+.game-score{flex:none;font-size:22px;font-weight:660;letter-spacing:-.015em;display:flex;align-items:baseline;gap:7px}
+.game-score .vs{color:var(--ink-4);font-size:15px;font-weight:400}
+.win{position:relative}
+
+/* ============================ SHEETS ============================ */
+dialog{
+  padding:0;border:0;background:none;max-width:none;max-height:none;
+  width:100%;height:100%;margin:0;color:var(--ink);
+}
+dialog::backdrop{background:rgba(6,12,11,.62)}
+.sheet{
+  position:fixed;left:0;right:0;bottom:0;
+  max-height:88dvh;overflow-y:auto;overscroll-behavior:contain;
+  background:var(--panel);border-top:1px solid var(--line-2);
+  border-radius:var(--r-sheet) var(--r-sheet) 0 0;
+  padding:8px 20px calc(22px + var(--safe-b));
+}
+.sheet-wide{max-width:560px;margin:0 auto}
+.grab{width:36px;height:4px;border-radius:2px;background:var(--line-2);margin:6px auto 14px}
+.sheet h2{font-size:19px;font-weight:660;letter-spacing:-.012em;margin:0 0 6px}
+.sheet p{color:var(--ink-2);font-size:14px;margin:0 0 16px;max-width:60ch}
+.sheet p.tight{margin-bottom:10px}
+.sheet hr{border:0;border-top:1px solid var(--line);margin:18px 0}
+
+/* Sheets rise from the bottom edge they are attached to. Modals stay centred;
+   these are not modals. @starting-style drives the enter with no JS timers. */
+dialog .sheet{transition:transform var(--t-sheet) var(--ease),opacity var(--t-sheet) var(--ease)}
+dialog[open] .sheet{transform:translateY(0);opacity:1}
+@starting-style{ dialog[open] .sheet{transform:translateY(14px);opacity:0} }
+dialog::backdrop{transition:opacity var(--t-sheet) var(--ease)}
+@starting-style{ dialog[open]::backdrop{opacity:0} }
+
+.rowlist{display:flex;flex-direction:column;gap:0}
+.row{
+  display:flex;align-items:center;gap:12px;width:100%;
+  padding:14px 0;text-align:left;border-bottom:1px solid var(--line);
+  font-size:15px;border-radius:8px;
+}
+.row:last-child{border-bottom:0}
+.row .chev{margin-left:auto;color:var(--ink-4);flex:none}
+.row .sub{display:block;font-size:12px;color:var(--ink-4);font-weight:400;margin-top:2px}
+.row-strong{font-weight:560}
+.row-warn{color:var(--warn)}
+@media (hover:hover) and (pointer:fine){ .row:hover{background:var(--panel-2)} }
+
+label.lbl{display:block;font-size:12px;font-weight:600;color:var(--ink-3);margin:0 0 6px}
+.input{
+  width:100%;height:48px;padding:0 14px;
+  background:var(--panel-2);border:1px solid var(--line);border-radius:var(--r-field);
+  font-size:16px;
+}
+.input:focus{border-color:var(--line-2)}
+textarea.input{height:132px;padding:12px 14px;resize:vertical;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:1.5}
+.field{margin:0 0 14px}
+.help{font-size:12px;color:var(--ink-4);margin:6px 0 0}
+.err{font-size:13px;color:var(--warn);margin:10px 0 0}
+
+/* The 1000 flag. Rare enough to earn a moment. */
+.flag-mark{
+  width:56px;height:56px;border-radius:var(--r-pill);display:grid;place-items:center;
+  background:var(--warn-soft);margin:2px 0 14px;
+}
+.big-num{font-size:30px;font-weight:700;letter-spacing:-.02em}
+
+/* Toast */
+.toast{
+  position:fixed;left:50%;bottom:calc(var(--safe-b) + 96px);z-index:var(--z-toast);
+  transform:translateX(-50%);
+  max-width:calc(100% - 32px);
+  padding:11px 16px;border-radius:var(--r-pill);
+  background:var(--ink);color:var(--bg);
+  font-size:14px;font-weight:560;text-align:center;
+  box-shadow:0 8px 24px rgba(0,0,0,.4);
+  opacity:0;pointer-events:none;
+  transition:opacity var(--t-ui) var(--ease),transform var(--t-ui) var(--ease);
+}
+.toast[data-on="1"]{opacity:1;transform:translateX(-50%) translateY(-6px)}
+body[data-tab="history"] .toast{bottom:calc(var(--safe-b) + 28px)}
+
+/* ============================ REDUCED MOTION ============================ */
+/* Fewer and gentler, not zero: colour and opacity still carry meaning. */
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{
+    animation-duration:.01ms !important;animation-iteration-count:1 !important;
+    transition-duration:.01ms !important;scroll-behavior:auto !important;
+  }
+  .press:active{transform:none}
+  .rail-fill{transition:none}
+  dialog .sheet,dialog[open] .sheet{transform:none}
+  .toast{transition:opacity .12s linear}
+  .toast[data-on="1"]{transform:translateX(-50%)}
+}
+
+/* Small phones: keep the two score fields side by side but tighten. */
+@media (max-width:359px){
+  .total{font-size:34px}
+  .scorefield{grid-template-columns:42px 1fr;height:48px}
+  .app{padding:0 12px}
+  .dock{padding-left:12px;padding-right:12px}
+}
+</style>
+</head>
+
+<body data-tab="play">
+
+<div class="app">
+  <header>
+    <div class="bar">
+      <!-- The mark is the rails: two bars and the 1000 line. Same shapes as the icon. -->
+      <svg class="mark" viewBox="0 0 192 192" aria-hidden="true">
+        <rect x="36" y="78" width="121" height="21" rx="10.5" fill="#E8B04B"/>
+        <rect x="36" y="112" width="75" height="21" rx="10.5" fill="#57C4B0"/>
+        <rect x="134" y="68" width="4" height="74" rx="2" fill="#E8734A"/>
+      </svg>
+      <span class="wordmark">Bukhara</span>
+      <button class="datebtn press" id="dateBtn" type="button">
+        <span id="dateLbl">Today</span>
+      </button>
+      <button class="iconbtn press" id="menuBtn" type="button" aria-label="More">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/>
+        </svg>
+      </button>
+    </div>
+
+    <div class="seg" id="seg" data-tab="play" role="tablist" aria-label="Views">
+      <button type="button" role="tab" id="tabPlay" aria-selected="true" aria-controls="panePlay">Play</button>
+      <button type="button" role="tab" id="tabHist" aria-selected="false" aria-controls="paneHist">History</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- ======================= PLAY ======================= -->
+    <section class="pane" id="panePlay" role="tabpanel" aria-labelledby="tabPlay">
+
+      <div class="teams" id="teams">
+        <div class="team" data-team="0">
+          <div class="team-top">
+            <button class="team-name press" data-rename="0" type="button">Team one</button>
+            <span class="crossed hide" data-crossed="0">Changed game</span>
+            <span class="total" data-total="0">0</span>
+          </div>
+          <div class="rail"><div class="rail-track"><div class="rail-fill" data-fill="0"></div></div><i class="rail-tick"></i></div>
+          <div class="rail-note"><span data-note="0">1000 to go</span><span data-best="0"></span></div>
+        </div>
+        <div class="team" data-team="1">
+          <div class="team-top">
+            <button class="team-name press" data-rename="1" type="button">Team two</button>
+            <span class="crossed hide" data-crossed="1">Changed game</span>
+            <span class="total" data-total="1">0</span>
+          </div>
+          <div class="rail"><div class="rail-track"><div class="rail-fill" data-fill="1"></div></div><i class="rail-tick"></i></div>
+          <div class="rail-note"><span data-note="1">1000 to go</span><span data-best="1"></span></div>
+        </div>
+      </div>
+
+      <section class="sec" id="chartSec">
+        <div class="sec-head">
+          <h2 class="sec-title">Running totals</h2>
+          <span class="sec-note" id="chartNote"></span>
+        </div>
+        <div class="chartwrap" id="chartWrap"></div>
+      </section>
+
+      <section class="sec">
+        <div class="sec-head">
+          <h2 class="sec-title">Rounds</h2>
+          <span class="sec-note" id="roundsNote"></span>
+        </div>
+        <div id="roundsWrap"></div>
+      </section>
+    </section>
+
+    <!-- ======================= HISTORY ======================= -->
+    <section class="pane hide" id="paneHist" role="tabpanel" aria-labelledby="tabHist">
+      <div id="histWrap"></div>
+    </section>
+  </main>
+</div>
+
+<!-- The entry dock. Play tab only. -->
+<div class="dock" id="dock">
+  <div class="dock-in">
+    <div class="dock-head">
+      <span class="dock-title" id="roundLbl">Round 1</span>
+      <span class="dock-hint" id="dockHint">Leave a box empty for 0</span>
+    </div>
+    <div class="fields">
+      <div>
+        <span class="field-cap cap0" id="cap0">Team one</span>
+        <div class="scorefield" data-sign="+" data-sf="0">
+          <button class="sign press" type="button" data-sign-btn="0" aria-label="Team one: score is positive. Tap for negative.">+</button>
+          <input class="num" data-num="0" type="text" inputmode="numeric" pattern="[0-9]*"
+                 autocomplete="off" placeholder="0" maxlength="4" aria-label="Team one score this round">
+        </div>
+      </div>
+      <div>
+        <span class="field-cap cap1" id="cap1">Team two</span>
+        <div class="scorefield" data-sign="+" data-sf="1">
+          <button class="sign press" type="button" data-sign-btn="1" aria-label="Team two: score is positive. Tap for negative.">+</button>
+          <input class="num" data-num="1" type="text" inputmode="numeric" pattern="[0-9]*"
+                 autocomplete="off" placeholder="0" maxlength="4" aria-label="Team two score this round">
+        </div>
+      </div>
+    </div>
+    <div class="add-wrap">
+      <button class="btn btn-primary press" id="addBtn" type="button">Add round</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<!-- ======================= SHEETS ======================= -->
+<dialog id="sheet"><div class="sheet sheet-wide" id="sheetBody"></div></dialog>
+<input type="file" id="filePick" accept="application/json,.json" class="sr">
+<a id="dl" class="sr" aria-hidden="true"></a>
+
+<script>
+"use strict";
+/* ===========================================================================
+   BUKHARA SCORES
+   Two teams, one score each per round, running totals, and a flag at 1000.
+   No build step, no framework, no backend. Everything lives on this device.
+   =========================================================================== */
+
+/* --- The knobs the README documents. Change these, then bump the cache name
+       in sw.js so phones pick up the new version. --------------------------- */
+var TARGET  = 1000;   // score a team must reach before they change their game
+var MAXSNAP = 20;     // how many automatic restore points to keep
+var RAIL_TICK = 0.70; // where the 1000 line sits on the rail, matching the icon
+
+var KEY   = "bukhara.state.v1";
+var SNAPS = "bukhara.snaps.v1";
+var MONTH = 30 * 24 * 60 * 60 * 1000;
+
+/* ============================ DATE HELPERS ============================
+   Dates are stored as plain YYYY-MM-DD and never round-tripped through UTC.
+   new Date("2026-08-08") parses as midnight UTC, which reads as the 7th for
+   anyone west of Greenwich. Always build from explicit parts. */
+function todayYMD(){
+  var d = new Date();
+  return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
+}
+function pad2(n){ return (n < 10 ? "0" : "") + n; }
+function parseYMD(s){
+  var p = String(s || "").split("-");
+  var d = new Date(+p[0], (+p[1] || 1) - 1, +p[2] || 1);
+  return isNaN(d) ? new Date() : d;
+}
+function fmtDate(ymd){
+  var d = parseYMD(ymd), now = new Date();
+  var same = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+  if (same) return "Today";
+  var opts = { weekday:"short", day:"numeric", month:"short" };
+  if (d.getFullYear() !== now.getFullYear()) opts.year = "numeric";
+  return d.toLocaleDateString(undefined, opts);
+}
+function fmtDateLong(ymd){
+  return parseYMD(ymd).toLocaleDateString(undefined, { day:"numeric", month:"short", year:"numeric" });
+}
+function ago(ts){
+  if (!ts) return null;
+  var d = Math.floor((Date.now() - ts) / 86400000);
+  if (d <= 0) return "today";
+  if (d === 1) return "yesterday";
+  if (d < 30) return d + " days ago";
+  var m = Math.round(d / 30);
+  return m === 1 ? "a month ago" : m + " months ago";
+}
+
+/* ============================ STATE ============================ */
+function blank(){
+  return {
+    v: 1,
+    teams: ["Team one", "Team two"],
+    rounds: [],                 // [{a:Number, b:Number}]
+    date: todayYMD(),
+    acked: [false, false],      // has the 1000 prompt been seen at the current total
+    archive: [],                // [{id, date, teams:[..], rounds:[..], totals:[..]}]
+    lastBackup: null
+  };
+}
+var S = blank();
+var storageOK = true;
+
+function load(){
+  try {
+    var raw = localStorage.getItem(KEY);
+    if (!raw) return;
+    var o = JSON.parse(raw);
+    if (!o || typeof o !== "object") return;
+    // Merge onto a blank so a file from an older build never leaves a hole.
+    S = Object.assign(blank(), o);
+    if (!Array.isArray(S.teams) || S.teams.length !== 2) S.teams = ["Team one", "Team two"];
+    if (!Array.isArray(S.rounds)) S.rounds = [];
+    if (!Array.isArray(S.archive)) S.archive = [];
+    if (!Array.isArray(S.acked)) S.acked = [false, false];
+    S.rounds = S.rounds.filter(isRound).map(function(r){ return { a: num(r.a), b: num(r.b) }; });
+    S.archive = S.archive.filter(function(g){ return g && Array.isArray(g.rounds); });
+  } catch (e){ /* corrupt or unreadable: fall back to a clean board */ }
+}
+function isRound(r){ return r && typeof r === "object" && isFinite(num(r.a)) && isFinite(num(r.b)); }
+function num(x){ var n = Number(x); return isFinite(n) ? Math.trunc(n) : 0; }
+
+function save(){
+  try {
+    localStorage.setItem(KEY, JSON.stringify(S));
+    if (!storageOK){ storageOK = true; }
+  } catch (e){
+    if (storageOK){
+      storageOK = false;
+      toast("This device is not saving scores. Copy a backup out.");
+    }
+  }
+}
+
+/* Restore points. Taken before anything destructive, capped at MAXSNAP.
+   Same device as the scores, so they cover a bad edit, not a lost phone. */
+function snap(label){
+  var list;
+  try {
+    list = JSON.parse(localStorage.getItem(SNAPS) || "[]");
+    if (!Array.isArray(list)) list = [];
+  } catch (e){ list = []; }
+  list.push({ t: Date.now(), label: label, data: JSON.stringify(S) });
+  while (list.length > MAXSNAP) list.shift();
+  try {
+    localStorage.setItem(SNAPS, JSON.stringify(list));
+  } catch (e){
+    // Out of room. Drop the oldest half and keep the recent points rather than
+    // letting restore quietly stop working. A full quota must never block the edit.
+    try {
+      localStorage.setItem(SNAPS, JSON.stringify(list.slice(Math.floor(list.length / 2))));
+    } catch (e2){ /* give up on this one snapshot */ }
+  }
+}
+function snaps(){
+  try {
+    var l = JSON.parse(localStorage.getItem(SNAPS) || "[]");
+    return Array.isArray(l) ? l : [];
+  } catch (e){ return []; }
+}
+
+/* ============================ DERIVED ============================ */
+function totals(rounds){
+  var t = [0, 0];
+  (rounds || S.rounds).forEach(function(r){ t[0] += r.a; t[1] += r.b; });
+  return t;
+}
+/* Cumulative series including the 0 the game starts at, so the chart has a
+   real origin instead of beginning at round one's score. */
+function series(rounds){
+  var rs = rounds || S.rounds, a = [0], b = [0], ta = 0, tb = 0;
+  rs.forEach(function(r){ ta += r.a; tb += r.b; a.push(ta); b.push(tb); });
+  return [a, b];
+}
+function crossed(i){ return totals()[i] >= TARGET; }
+function bestRound(rounds, i){
+  var rs = rounds || S.rounds, best = null;
+  rs.forEach(function(r){ var v = i === 0 ? r.a : r.b; if (best === null || v > best) best = v; });
+  return best;
+}
+function sign(n){ return n < 0 ? String(n) : "+" + n; }
+
+/* ============================ RENDER ============================ */
+var el = function(id){ return document.getElementById(id); };
+var q  = function(sel, root){ return (root || document).querySelector(sel); };
+var qa = function(sel, root){ return Array.prototype.slice.call((root || document).querySelectorAll(sel)); };
+
+function render(){
+  renderTeams();
+  renderDock();
+  renderChart();
+  renderRounds();
+  renderHistory();
+  el("dateLbl").textContent = fmtDate(S.date);
+  var tt = totals();
+  document.title = S.rounds.length
+    ? tt[0] + " to " + tt[1] + " | Bukhara Scores"
+    : "Bukhara Scores";
+}
+
+function renderTeams(){
+  var t = totals();
+  for (var i = 0; i < 2; i++){
+    var name = S.teams[i];
+    q('[data-rename="' + i + '"]').textContent = name;
+
+    var tot = q('[data-total="' + i + '"]');
+    tot.textContent = String(t[i]);
+    tot.classList.toggle("neg", t[i] < 0);          // negatives are orange everywhere
+
+    // The rail. Fixed scale so the 1000 tick always sits at RAIL_TICK, which
+    // leaves headroom for a team that runs past it. Negatives read as empty:
+    // the number below carries the sign, the bar does not go backwards.
+    var full = TARGET / RAIL_TICK;
+    var frac = Math.max(0, Math.min(1, t[i] / full));
+    q('[data-fill="' + i + '"]').style.transform = "scaleX(" + frac.toFixed(4) + ")";
+
+    var note = q('[data-note="' + i + '"]');
+    var gap = TARGET - t[i];
+    note.textContent = gap > 0 ? gap + " to go" : "past 1000 by " + (-gap);
+
+    var best = bestRound(null, i);
+    q('[data-best="' + i + '"]').textContent =
+      (best === null || S.rounds.length === 0) ? "" : "best round " + best;
+
+    q('[data-crossed="' + i + '"]').classList.toggle("hide", t[i] < TARGET);
+  }
+  el("cap0").textContent = S.teams[0];
+  el("cap1").textContent = S.teams[1];
+}
+
+function renderDock(){
+  el("roundLbl").textContent = "Round " + (S.rounds.length + 1);
+  var hasAny = qa("[data-num]").some(function(n){ return n.value.trim() !== ""; });
+  el("dockHint").textContent = hasAny ? "" : "Leave a box empty for 0";
+}
+
+/* --- Chart -----------------------------------------------------------------
+   One geometry function feeds both renderers: the SVG on screen and the canvas
+   on the share image. Two drawings of the same numbers must never drift. */
+function chartGeom(a, b, w, h){
+  var padL = 4, padR = 40, padT = 12, padB = 20;
+  var n = a.length - 1;                       // rounds played
+  var all = a.concat(b);
+  var lo = Math.min(0, Math.min.apply(null, all));
+  var hi = Math.max.apply(null, all);
+  // Bring the 1000 line into frame once it is within reach, so "how far to go"
+  // is legible without squashing an early game against the floor.
+  if (hi > TARGET * 0.72) hi = Math.max(hi, TARGET);
+  if (hi === lo) hi = lo + 100;
+  var span = hi - lo, headroom = span * 0.12;
+  hi += headroom;
+  if (lo < 0) lo -= headroom;
+
+  var iw = Math.max(1, w - padL - padR), ih = Math.max(1, h - padT - padB);
+  var X = function(i){ return padL + (n === 0 ? iw / 2 : (i / n) * iw); };
+  var Y = function(v){ return padT + ih - ((v - lo) / (hi - lo)) * ih; };
+
+  return {
+    n:n, X:X, Y:Y, lo:lo, hi:hi, padL:padL, padR:padR, padT:padT, padB:padB, iw:iw, ih:ih,
+    ptsA: a.map(function(v,i){ return [X(i), Y(v)]; }),
+    ptsB: b.map(function(v,i){ return [X(i), Y(v)]; }),
+    zeroY: (lo < 0 && hi > 0) ? Y(0) : null,
+    tgtY:  (TARGET <= hi && TARGET >= lo) ? Y(TARGET) : null
+  };
+}
+
+function renderChart(){
+  var wrap = el("chartWrap");
+  wrap.textContent = "";
+  var note = el("chartNote");
+
+  // One empty state per screen. Before the first round the rounds list already
+  // says what to do, so the chart section steps out of the way entirely rather
+  // than stacking a second dashed box on top of it.
+  el("chartSec").classList.toggle("hide", S.rounds.length === 0);
+  if (S.rounds.length === 0){ note.textContent = ""; return; }
+  note.textContent = S.rounds.length + (S.rounds.length === 1 ? " round" : " rounds");
+
+  var w = wrap.clientWidth || 340;
+  var h = 152;
+  var s = series();
+  var g = chartGeom(s[0], s[1], w, h);
+  var NS = "http://www.w3.org/2000/svg";
+  var svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("class", "chart");
+  svg.setAttribute("viewBox", "0 0 " + w + " " + h);
+  svg.setAttribute("height", h);
+  svg.setAttribute("role", "img");
+  var t = totals();
+  svg.setAttribute("aria-label",
+    "Running totals after " + S.rounds.length + " rounds. " +
+    S.teams[0] + " " + t[0] + ", " + S.teams[1] + " " + t[1] + ".");
+
+  function line(x1, y1, x2, y2, cls){
+    var l = document.createElementNS(NS, "line");
+    l.setAttribute("x1", x1); l.setAttribute("y1", y1);
+    l.setAttribute("x2", x2); l.setAttribute("y2", y2);
+    l.setAttribute("class", cls);
+    svg.appendChild(l); return l;
+  }
+  function text(x, y, str, cls, anchor){
+    var tx = document.createElementNS(NS, "text");
+    tx.setAttribute("x", x); tx.setAttribute("y", y);
+    tx.setAttribute("class", cls);
+    if (anchor) tx.setAttribute("text-anchor", anchor);
+    tx.textContent = str;
+    svg.appendChild(tx); return tx;
+  }
+
+  // Baseline, then the target reference. Both recessive: the data is the ink.
+  line(g.padL, g.padT + g.ih, g.padL + g.iw, g.padT + g.ih, "grid");
+  if (g.zeroY !== null) line(g.padL, g.zeroY, g.padL + g.iw, g.zeroY, "grid");
+  if (g.tgtY !== null){
+    line(g.padL, g.tgtY, g.padL + g.iw, g.tgtY, "tgt");
+    // Label the target on the LEFT, above the line. The right gutter belongs to
+    // the two end labels, and a team sitting near 1000 puts its total exactly
+    // where this would have been.
+    text(g.padL + 1, g.tgtY - 6, String(TARGET), "tgt-l", "start");
+  }
+
+  // Round numbers along the foot: first, last, and the middle when there is room.
+  var ticks = g.n <= 1 ? [g.n] : (w < 300 ? [1, g.n] : [1, Math.round(g.n / 2), g.n]);
+  ticks.filter(function(v, i, arr){ return v >= 1 && arr.indexOf(v) === i; })
+       .forEach(function(i){ text(g.X(i), h - 4, String(i), "axis", "middle"); });
+
+  function draw(pts, colour, name, total){
+    var p = document.createElementNS(NS, "polyline");
+    p.setAttribute("points", pts.map(function(q){ return q[0] + "," + q[1]; }).join(" "));
+    p.setAttribute("class", "ln");
+    p.setAttribute("stroke", colour);
+    svg.appendChild(p);
+
+    var last = pts[pts.length - 1];
+    var c = document.createElementNS(NS, "circle");
+    c.setAttribute("cx", last[0]); c.setAttribute("cy", last[1]); c.setAttribute("r", 4);
+    c.setAttribute("class", "dot"); c.setAttribute("fill", colour);
+    svg.appendChild(c);
+
+    // Direct end label. With only two series this replaces a legend box, and it
+    // means identity never rests on colour alone.
+    var lbl = text(last[0] + 8, last[1] + 4, String(total), "endl", "start");
+    lbl.setAttribute("fill", colour);
+    lbl.setAttribute("aria-label", name);
+  }
+  // Draw the trailing team first so the leader's end label lands on top.
+  if (t[0] >= t[1]){
+    draw(g.ptsB, "#57C4B0", S.teams[1], t[1]);
+    draw(g.ptsA, "#E8B04B", S.teams[0], t[0]);
+  } else {
+    draw(g.ptsA, "#E8B04B", S.teams[0], t[0]);
+    draw(g.ptsB, "#57C4B0", S.teams[1], t[1]);
+  }
+  wrap.appendChild(svg);
+}
+
+function renderRounds(){
+  var wrap = el("roundsWrap");
+  wrap.textContent = "";
+  el("roundsNote").textContent = "";
+
+  if (S.rounds.length === 0){
+    var e = document.createElement("div");
+    e.className = "empty";
+    e.textContent = "No rounds yet. Enter the first score below.";
+    wrap.appendChild(e);
+    return;
+  }
+  el("roundsNote").textContent = "tap a round to edit";
+
+  var s = series();
+  var table = document.createElement("table");
+  table.className = "rt";
+  var thead = document.createElement("thead");
+  var htr = document.createElement("tr");
+  [["#", ""], [S.teams[0], "hA"], [S.teams[1], "hB"]].forEach(function(pair){
+    var th = document.createElement("th");
+    th.textContent = pair[0];
+    if (pair[1]) th.className = pair[1];
+    htr.appendChild(th);
+  });
+  thead.appendChild(htr);
+  table.appendChild(thead);
+
+  var tb = document.createElement("tbody");
+  // Newest first: the round you just entered is the one you check.
+  for (var i = S.rounds.length - 1; i >= 0; i--){
+    var r = S.rounds[i];
+    var tr = document.createElement("tr");
+    var td = document.createElement("td");
+    td.colSpan = 3;
+
+    var btn = document.createElement("button");
+    btn.className = "rowbtn press";
+    btn.type = "button";
+    btn.setAttribute("data-round", String(i));
+    btn.setAttribute("aria-label",
+      "Round " + (i + 1) + ". " + S.teams[0] + " " + sign(r.a) + ", " + S.teams[1] + " " + sign(r.b) + ". Edit.");
+
+    var n = document.createElement("span");
+    n.textContent = String(i + 1);
+    btn.appendChild(n);
+    btn.appendChild(cell(r.a, s[0][i + 1]));
+    btn.appendChild(cell(r.b, s[1][i + 1]));
+
+    td.appendChild(btn);
+    tr.appendChild(td);
+    tb.appendChild(tr);
+  }
+  table.appendChild(tb);
+  wrap.appendChild(table);
+
+  function cell(delta, running){
+    var c = document.createElement("span");
+    c.className = "cell";
+    var d = document.createElement("span");
+    d.className = "d" + (delta < 0 ? " neg" : (delta === 0 ? " zero" : ""));
+    d.textContent = sign(delta);
+    var run = document.createElement("span");
+    run.className = "run" + (running < 0 ? " neg" : "");
+    run.textContent = String(running);
+    c.appendChild(d); c.appendChild(run);
+    return c;
+  }
+}
+
+/* --- History ---------------------------------------------------------------
+   Series record, per-team stats, and past results. All three read from the
+   archive, so an empty archive gets one honest empty state, not three. */
+function record(){
+  var w = [0, 0], draws = 0;
+  S.archive.forEach(function(g){
+    var t = g.totals || totals(g.rounds);
+    if (t[0] > t[1]) w[0]++; else if (t[1] > t[0]) w[1]++; else draws++;
+  });
+  return { w: w, draws: draws };
+}
+function teamStats(i){
+  var games = S.archive.length, wins = 0, sum = 0, high = null, bestR = null;
+  S.archive.forEach(function(g){
+    var t = g.totals || totals(g.rounds);
+    if (t[i] > t[1 - i]) wins++;
+    sum += t[i];
+    if (high === null || t[i] > high) high = t[i];
+    var br = bestRound(g.rounds, i);
+    if (br !== null && (bestR === null || br > bestR)) bestR = br;
+  });
+  return {
+    games: games, wins: wins,
+    avg: games ? Math.round(sum / games) : null,
+    high: high, bestR: bestR
+  };
+}
+
+function renderHistory(){
+  var wrap = el("histWrap");
+  wrap.textContent = "";
+
+  if (S.archive.length === 0){
+    var e = document.createElement("div");
+    e.className = "empty";
+    e.textContent = "Finished games land here. Log one from the menu when you are done.";
+    wrap.appendChild(e);
+    return;
+  }
+
+  var rec = record();
+
+  // Series record
+  var s1 = section("Series record");
+  var row = document.createElement("div");
+  row.className = "record";
+  var sc = document.createElement("div");
+  sc.className = "record-score";
+  var n0 = document.createElement("span"); n0.className = "hA"; n0.textContent = String(rec.w[0]);
+  var sep = document.createElement("span"); sep.className = "record-sep"; sep.textContent = "/";
+  var n1 = document.createElement("span"); n1.className = "hB"; n1.textContent = String(rec.w[1]);
+  sc.appendChild(n0); sc.appendChild(sep); sc.appendChild(n1);
+  // The stats table directly below names both teams in their own colours, so
+  // repeating them here just reads badly once a team is called something like
+  // "Radhika and Gautam".
+  var lbl = document.createElement("div");
+  lbl.className = "record-lbl";
+  lbl.textContent = S.archive.length + (S.archive.length === 1 ? " game played" : " games played") +
+    (rec.draws ? "\n" + rec.draws + (rec.draws === 1 ? " draw" : " draws") : "");
+  lbl.style.whiteSpace = "pre-line";
+  row.appendChild(sc); row.appendChild(lbl);
+  s1.appendChild(row);
+  wrap.appendChild(s1);
+
+  // Per-team stats
+  var A = teamStats(0), B = teamStats(1);
+  var s2 = section("Per team");
+  var tbl = document.createElement("table");
+  tbl.className = "stats";
+  var th = document.createElement("thead"), thr = document.createElement("tr");
+  [["", ""], [S.teams[0], "hA"], [S.teams[1], "hB"]].forEach(function(p){
+    var c = document.createElement("th"); c.textContent = p[0];
+    if (p[1]) c.className = p[1];
+    thr.appendChild(c);
+  });
+  th.appendChild(thr); tbl.appendChild(th);
+  var tb = document.createElement("tbody");
+  [
+    ["Games won", A.wins, B.wins],
+    ["Average game", A.avg, B.avg],
+    ["Highest game", A.high, B.high],
+    ["Best round", A.bestR, B.bestR]
+  ].forEach(function(r){
+    var tr = document.createElement("tr");
+    r.forEach(function(v, k){
+      var td = document.createElement("td");
+      td.textContent = (v === null || v === undefined) ? "-" : String(v);
+      tr.appendChild(td);
+    });
+    tb.appendChild(tr);
+  });
+  tbl.appendChild(tb);
+  s2.appendChild(tbl);
+  wrap.appendChild(s2);
+
+  // Past results, newest first
+  var s3 = section("Past games", "tap to edit");
+  for (var i = S.archive.length - 1; i >= 0; i--){
+    s3.appendChild(gameRow(S.archive[i], i));
+  }
+  wrap.appendChild(s3);
+
+  function section(title, note){
+    var sec = document.createElement("section");
+    sec.className = "sec";
+    var head = document.createElement("div");
+    head.className = "sec-head";
+    var h = document.createElement("h2");
+    h.className = "sec-title";
+    h.textContent = title;
+    head.appendChild(h);
+    if (note){
+      var nn = document.createElement("span");
+      nn.className = "sec-note";
+      nn.textContent = note;
+      head.appendChild(nn);
+    }
+    sec.appendChild(head);
+    return sec;
+  }
+  function gameRow(g, idx){
+    var t = g.totals || totals(g.rounds);
+    var names = g.teams || S.teams;
+    var b = document.createElement("button");
+    b.className = "game press";
+    b.type = "button";
+    b.setAttribute("data-game", String(idx));
+    b.setAttribute("aria-label",
+      fmtDateLong(g.date) + ". " + names[0] + " " + t[0] + ", " + names[1] + " " + t[1] + ". Edit.");
+
+    var d = document.createElement("span");
+    d.className = "game-date";
+    d.textContent = fmtDateLong(g.date);
+
+    var m = document.createElement("span");
+    m.className = "game-meta";
+    m.textContent = g.rounds.length + (g.rounds.length === 1 ? " round" : " rounds") +
+      (names[0] !== S.teams[0] || names[1] !== S.teams[1] ? " . " + names[0] + " and " + names[1] : "");
+
+    var sc = document.createElement("span");
+    sc.className = "game-score";
+    var x = document.createElement("span");
+    x.textContent = String(t[0]);
+    if (t[0] > t[1]) x.className = "hA";
+    var v = document.createElement("span"); v.className = "vs"; v.textContent = "/";
+    var y = document.createElement("span");
+    y.textContent = String(t[1]);
+    if (t[1] > t[0]) y.className = "hB";
+    sc.appendChild(x); sc.appendChild(v); sc.appendChild(y);
+
+    var when = document.createElement("span");
+    when.className = "game-when";
+    when.appendChild(d); when.appendChild(m);
+    b.appendChild(when); b.appendChild(sc);
+    return b;
+  }
+}
+
+/* ============================ TOAST ============================ */
+var toastT = null;
+function toast(msg){
+  var t = el("toast");
+  t.textContent = msg;
+  t.setAttribute("data-on", "1");
+  clearTimeout(toastT);
+  toastT = setTimeout(function(){ t.removeAttribute("data-on"); }, 2600);
+}
+
+/* ============================ SHEETS ============================ */
+var sheet = el("sheet"), sheetBody = el("sheetBody");
+function openSheet(build){
+  sheetBody.textContent = "";
+  var grab = document.createElement("div");
+  grab.className = "grab";
+  sheetBody.appendChild(grab);
+  build(sheetBody);
+  if (!sheet.open) sheet.showModal();
+  var f = sheetBody.querySelector('[data-autofocus="1"]');
+  if (f) setTimeout(function(){ f.focus(); if (f.select) f.select(); }, 60);
+}
+function closeSheet(){ if (sheet.open) sheet.close(); }
+// Tapping the backdrop closes. The sheet itself must not swallow that click.
+sheet.addEventListener("click", function(e){ if (e.target === sheet) closeSheet(); });
+
+function h(tag, cls, txt){
+  var n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (txt !== undefined && txt !== null) n.textContent = txt;
+  return n;
+}
+function rowBtn(parent, label, sub, onClick, cls){
+  var b = h("button", "row press" + (cls ? " " + cls : ""));
+  b.type = "button";
+  var wrap = h("span");
+  wrap.appendChild(h("span", "row-strong", label));
+  if (sub) wrap.appendChild(h("span", "sub", sub));
+  b.appendChild(wrap);
+  var chev = h("span", "chev", "›");
+  b.appendChild(chev);
+  b.addEventListener("click", onClick);
+  parent.appendChild(b);
+  return b;
+}
+
+/* ============================ ACTIONS ============================ */
+function readEntry(){
+  var out = [];
+  for (var i = 0; i < 2; i++){
+    var input = q('[data-num="' + i + '"]');
+    var neg = q('[data-sf="' + i + '"]').getAttribute("data-sign") === "-";
+    var digits = input.value.replace(/[^0-9]/g, "");
+    var v = digits === "" ? 0 : parseInt(digits, 10);
+    out.push(neg ? -v : v);
+  }
+  return out;
+}
+function clearEntry(){
+  for (var i = 0; i < 2; i++){
+    q('[data-num="' + i + '"]').value = "";
+    setSign(i, "+");
+  }
+  renderDock();
+}
+function setSign(i, s){
+  var sf = q('[data-sf="' + i + '"]');
+  sf.setAttribute("data-sign", s);
+  var btn = q('[data-sign-btn="' + i + '"]');
+  btn.textContent = s === "-" ? "−" : "+";           // a real minus sign, not a hyphen
+  btn.setAttribute("aria-label",
+    S.teams[i] + ": score is " + (s === "-" ? "negative. Tap for positive." : "positive. Tap for negative."));
+}
+
+function addRound(){
+  var v = readEntry();
+  if (v[0] === 0 && v[1] === 0){
+    // Both empty is almost always a mis-tap, but a genuine 0/0 round exists.
+    openSheet(function(b){
+      b.appendChild(h("h2", null, "Add a round of 0 and 0?"));
+      b.appendChild(h("p", null, "Both boxes are empty. That records a round where neither team scored."));
+      var r = h("div", "btn-row");
+      var no = h("button", "btn btn-quiet press", "Cancel"); no.type = "button";
+      var yes = h("button", "btn btn-primary press", "Add it"); yes.type = "button";
+      no.addEventListener("click", closeSheet);
+      yes.addEventListener("click", function(){ closeSheet(); commitRound(0, 0); });
+      r.appendChild(no); r.appendChild(yes);
+      b.appendChild(r);
+    });
+    return;
+  }
+  commitRound(v[0], v[1]);
+}
+function commitRound(a, b){
+  snap("round added");
+  var before = totals();
+  S.rounds.push({ a: a, b: b });
+  syncAck();
+  save();
+  clearEntry();
+  render();
+  checkTarget(before);
+}
+
+/* The 1000 flag tracks where a team stands right now. Penalties that drag a
+   team back under the line clear the flag and the acknowledgement with it, so
+   crossing a second time prompts afresh. */
+function syncAck(){
+  var t = totals();
+  for (var i = 0; i < 2; i++) if (t[i] < TARGET) S.acked[i] = false;
+}
+function checkTarget(before){
+  var t = totals();
+  for (var i = 0; i < 2; i++){
+    if (t[i] >= TARGET && !S.acked[i]){
+      flagSheet(i, t[i], before[i] < TARGET);
+      return;                       // one prompt at a time
+    }
+  }
+}
+function flagSheet(i, total, isNew){
+  S.acked[i] = true;
+  save();
+  openSheet(function(b){
+    var mark = h("div", "flag-mark");
+    mark.innerHTML = '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#E8734A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 21V4.5"/><path d="M5 5.2h11.5l-2.2 3.6 2.2 3.6H5"/></svg>';
+    b.appendChild(mark);
+    b.appendChild(h("h2", null, S.teams[i] + " reached " + TARGET + "."));
+    b.appendChild(h("p", null,
+      isNew
+        ? "They are on " + total + " and change their game from here."
+        : "They are on " + total + ", which is still past the line."));
+
+    var go = h("button", "btn btn-primary press", "Got it");
+    go.type = "button";
+    go.addEventListener("click", closeSheet);
+    b.appendChild(go);
+
+    var log = h("button", "btn btn-quiet press", "Log this game and start a new one");
+    log.type = "button";
+    log.style.marginTop = "10px";
+    log.addEventListener("click", function(){ closeSheet(); confirmLog(); });
+    b.appendChild(log);
+  });
+}
+
+function editRound(i){
+  var r = S.rounds[i];
+  openSheet(function(b){
+    b.appendChild(h("h2", null, "Round " + (i + 1)));
+    b.appendChild(h("p", "tight", "Use a minus sign for a penalty."));
+
+    var grid = h("div", "fields");
+    var inputs = [];
+    [0, 1].forEach(function(k){
+      var wrapper = h("div");
+      var cap = h("span", "field-cap cap" + k, S.teams[k]);
+      wrapper.appendChild(cap);
+      var inp = h("input", "input");
+      inp.type = "text";
+      inp.inputMode = "numeric";
+      inp.autocomplete = "off";
+      inp.value = String(k === 0 ? r.a : r.b);
+      inp.style.textAlign = "right";
+      inp.setAttribute("aria-label", S.teams[k] + " score for round " + (i + 1));
+      if (k === 0) inp.dataset.autofocus = "1";
+      inputs.push(inp);
+      wrapper.appendChild(inp);
+      grid.appendChild(wrapper);
+    });
+    b.appendChild(grid);
+
+    var err = h("p", "err"); err.style.display = "none";
+    b.appendChild(err);
+
+    var row = h("div", "btn-row");
+    row.style.marginTop = "16px";
+    var del = h("button", "btn btn-warn press", "Delete"); del.type = "button";
+    var ok  = h("button", "btn btn-primary press", "Save"); ok.type = "button";
+    del.addEventListener("click", function(){
+      snap("round deleted");
+      S.rounds.splice(i, 1);
+      syncAck(); save(); closeSheet(); render();
+      toast("Round deleted");
+    });
+    ok.addEventListener("click", function(){
+      var vals = inputs.map(function(n){ return parseSigned(n.value); });
+      if (vals.some(function(v){ return v === null; })){
+        err.textContent = "Enter whole numbers, for example 120 or -30.";
+        err.style.display = "";
+        return;
+      }
+      var before = totals();
+      snap("round edited");
+      S.rounds[i] = { a: vals[0], b: vals[1] };
+      syncAck(); save(); closeSheet(); render();
+      checkTarget(before);
+    });
+    row.appendChild(del); row.appendChild(ok);
+    b.appendChild(row);
+  });
+}
+function parseSigned(s){
+  var v = String(s).trim().replace(/−/g, "-").replace(/\s/g, "");
+  if (v === "" ) return 0;
+  if (!/^-?\d{1,6}$/.test(v)) return null;
+  return parseInt(v, 10);
+}
+
+function renameTeam(i){
+  openSheet(function(b){
+    b.appendChild(h("h2", null, "Team name"));
+    var f = h("div", "field");
+    var lab = h("label", "lbl", "Name");
+    lab.setAttribute("for", "nameInput");
+    var inp = h("input", "input");
+    inp.id = "nameInput";
+    inp.type = "text";
+    inp.value = S.teams[i];
+    inp.maxLength = 24;
+    inp.dataset.autofocus = "1";
+    f.appendChild(lab); f.appendChild(inp);
+    b.appendChild(f);
+    b.appendChild(h("p", "help", "Past games keep the names they were played under."));
+
+    var ok = h("button", "btn btn-primary press", "Save");
+    ok.type = "button";
+    ok.style.marginTop = "8px";
+    function commit(){
+      var v = inp.value.trim();
+      if (!v) { closeSheet(); return; }
+      snap("team renamed");
+      S.teams[i] = v.slice(0, 24);
+      save(); closeSheet(); render();
+    }
+    ok.addEventListener("click", commit);
+    inp.addEventListener("keydown", function(e){ if (e.key === "Enter") commit(); });
+    b.appendChild(ok);
+  });
+}
+
+function pickDate(current, onPick, title){
+  openSheet(function(b){
+    b.appendChild(h("h2", null, title || "Game date"));
+    var f = h("div", "field");
+    var lab = h("label", "lbl", "Date");
+    lab.setAttribute("for", "dateInput");
+    var inp = h("input", "input");
+    inp.id = "dateInput";
+    inp.type = "date";
+    inp.value = current;
+    f.appendChild(lab); f.appendChild(inp);
+    b.appendChild(f);
+    b.appendChild(h("p", "help", "Handy when you write up a game the morning after."));
+    var ok = h("button", "btn btn-primary press", "Save");
+    ok.type = "button";
+    ok.style.marginTop = "8px";
+    ok.addEventListener("click", function(){
+      var v = inp.value || current;
+      closeSheet();
+      onPick(v);
+    });
+    b.appendChild(ok);
+  });
+}
+
+function confirmLog(){
+  if (S.rounds.length === 0){ toast("Nothing to log yet"); return; }
+  var t = totals();
+  var lead = t[0] === t[1] ? "It is level." : (t[0] > t[1] ? S.teams[0] : S.teams[1]) + " is ahead.";
+  openSheet(function(b){
+    b.appendChild(h("h2", null, "Log this game?"));
+    b.appendChild(h("p", null,
+      t[0] + " to " + t[1] + " over " + S.rounds.length +
+      (S.rounds.length === 1 ? " round" : " rounds") + ". " + lead +
+      " It moves to History and the board clears for a new game."));
+    var row = h("div", "btn-row");
+    var no = h("button", "btn btn-quiet press", "Not yet"); no.type = "button";
+    var yes = h("button", "btn btn-primary press", "Log it"); yes.type = "button";
+    no.addEventListener("click", closeSheet);
+    yes.addEventListener("click", function(){ closeSheet(); logGame(); });
+    row.appendChild(no); row.appendChild(yes);
+    b.appendChild(row);
+  });
+}
+function logGame(){
+  snap("game logged");
+  S.archive.push({
+    id: "g" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    date: S.date,
+    teams: S.teams.slice(),
+    rounds: S.rounds.slice(),
+    totals: totals()
+  });
+  S.rounds = [];
+  S.acked = [false, false];
+  S.date = todayYMD();
+  save();
+  render();
+  toast("Logged. Board cleared.");
+}
+
+function editGame(idx){
+  var g = S.archive[idx];
+  openSheet(function(b){
+    var t = g.totals || totals(g.rounds);
+    b.appendChild(h("h2", null, (g.teams || S.teams)[0] + " " + t[0] + ", " + (g.teams || S.teams)[1] + " " + t[1]));
+    b.appendChild(h("p", "tight", g.rounds.length + (g.rounds.length === 1 ? " round" : " rounds") +
+      " played on " + fmtDateLong(g.date) + "."));
+    var list = h("div", "rowlist");
+    rowBtn(list, "Change the date", fmtDateLong(g.date), function(){
+      closeSheet();
+      pickDate(g.date, function(v){
+        snap("game date changed");
+        S.archive[idx].date = v;
+        save(); render(); toast("Date changed");
+      }, "Game date");
+    });
+    rowBtn(list, "Delete this game", "Removes it from the series record", function(){
+      snap("game deleted");
+      S.archive.splice(idx, 1);
+      save(); closeSheet(); render();
+      toast("Game deleted");
+    }, "row-warn");
+    b.appendChild(list);
+  });
+}
+
+/* ============================ MENU ============================ */
+function openMenu(){
+  openSheet(function(b){
+    b.appendChild(h("h2", null, "Bukhara"));
+    var list = h("div", "rowlist");
+    rowBtn(list, "Log this game", S.rounds.length
+      ? S.rounds.length + (S.rounds.length === 1 ? " round" : " rounds") + " on the board"
+      : "Nothing on the board yet", function(){ closeSheet(); confirmLog(); });
+    rowBtn(list, "Share scoreboard image", "A picture for the group chat", function(){
+      closeSheet(); shareCard();
+    });
+    rowBtn(list, "Backup and restore", backupSub(), function(){ closeSheet(); openBackup(); });
+    rowBtn(list, "Clear the board", "Throws away the current game", function(){
+      closeSheet(); confirmClear();
+    }, "row-warn");
+    b.appendChild(list);
+    b.appendChild(h("hr"));
+    b.appendChild(h("p", "help",
+      "Scores live on this device only. Sharing the link lets other people use the app; it does not show them your game."));
+  });
+}
+function backupSub(){
+  var a = ago(S.lastBackup);
+  if (!a) return "No file saved yet";
+  var stale = S.lastBackup && (Date.now() - S.lastBackup > MONTH);
+  return (stale ? "Last file " + a + ". Worth saving a new one." : "Last file " + a);
+}
+function confirmClear(){
+  if (S.rounds.length === 0){ toast("The board is already clear"); return; }
+  openSheet(function(b){
+    b.appendChild(h("h2", null, "Clear the board?"));
+    b.appendChild(h("p", null,
+      "This throws away " + S.rounds.length + (S.rounds.length === 1 ? " round" : " rounds") +
+      " without logging the game. A restore point is kept, so it can be undone."));
+    var row = h("div", "btn-row");
+    var no = h("button", "btn btn-quiet press", "Keep it"); no.type = "button";
+    var yes = h("button", "btn btn-warn press", "Clear"); yes.type = "button";
+    no.addEventListener("click", closeSheet);
+    yes.addEventListener("click", function(){
+      snap("board cleared");
+      S.rounds = []; S.acked = [false, false]; S.date = todayYMD();
+      save(); closeSheet(); render();
+      toast("Board cleared");
+    });
+    row.appendChild(no); row.appendChild(yes);
+    b.appendChild(row);
+  });
+}
+
+/* ============================ BACKUP ============================ */
+function openBackup(){
+  openSheet(function(b){
+    b.appendChild(h("h2", null, "Backup and restore"));
+    var a = ago(S.lastBackup);
+    var stale = S.lastBackup && (Date.now() - S.lastBackup > MONTH);
+    var status = h("p", null, !a
+      ? "No backup file saved yet. Everything is on this phone and nowhere else."
+      : (stale
+          ? "Last backup file was saved " + a + ". Worth saving a fresh one."
+          : "Last backup file was saved " + a + "."));
+    if (!a || stale) status.style.color = "var(--warn)";
+    b.appendChild(status);
+
+    var list = h("div", "rowlist");
+    rowBtn(list, "Download backup file", "The only backup that survives a lost phone", function(){
+      downloadBackup();
+    });
+    rowBtn(list, "Load a file", "Replaces everything on this device", function(){
+      el("filePick").click();
+    });
+    rowBtn(list, "Copy as text", "For pasting into a note or a chat", function(){
+      copyText();
+    });
+    rowBtn(list, "Paste text in", "Restore from copied text", function(){
+      closeSheet(); pasteText();
+    });
+    rowBtn(list, "Restore points", snaps().length
+      ? snaps().length + " saved automatically on this device"
+      : "None yet", function(){ closeSheet(); openSnaps(); });
+    b.appendChild(list);
+
+    b.appendChild(h("hr"));
+    b.appendChild(h("p", "help",
+      "Restore points sit on this device, so they cover a bad edit, not a lost phone. " +
+      "Clearing your browser's site data erases everything here. The downloaded file is the only real backup."));
+  });
+}
+function payload(){
+  return JSON.stringify({ app: "bukhara", v: 1, saved: new Date().toISOString(), state: S }, null, 2);
+}
+function downloadBackup(){
+  var blob = new Blob([payload()], { type: "application/json" });
+  var url = URL.createObjectURL(blob);
+  var a = el("dl");
+  a.href = url;
+  a.download = "bukhara-" + todayYMD() + ".json";
+  a.click();
+  setTimeout(function(){ URL.revokeObjectURL(url); }, 4000);
+  S.lastBackup = Date.now();
+  save();
+  toast("Backup file saved");
+}
+function copyText(){
+  var text = payload();
+  function done(){ S.lastBackup = Date.now(); save(); toast("Copied. Paste it somewhere safe."); }
+  if (navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(done, function(){ fallbackCopy(text, done); });
+  } else {
+    fallbackCopy(text, done);
+  }
+}
+function fallbackCopy(text, done){
+  // Older iOS refuses clipboard writes outside a very tight gesture window.
+  // Show the text and let the person copy it by hand rather than failing mute.
+  closeSheet();
+  setTimeout(function(){
+    openSheet(function(b){
+      b.appendChild(h("h2", null, "Copy this text"));
+      b.appendChild(h("p", null, "Select all of it and copy. Keep it somewhere you will find again."));
+      var ta = h("textarea", "input");
+      ta.readOnly = true;
+      ta.value = text;
+      b.appendChild(ta);
+      var ok = h("button", "btn btn-primary press", "Done");
+      ok.type = "button";
+      ok.style.marginTop = "12px";
+      ok.addEventListener("click", function(){ closeSheet(); done(); });
+      b.appendChild(ok);
+      setTimeout(function(){ ta.focus(); ta.setSelectionRange(0, ta.value.length); }, 60);
+    });
+  }, 60);
+}
+function pasteText(){
+  openSheet(function(b){
+    b.appendChild(h("h2", null, "Paste text in"));
+    b.appendChild(h("p", null, "Paste a backup here. It replaces everything currently on this device."));
+    var ta = h("textarea", "input");
+    ta.placeholder = '{ "app": "bukhara", ... }';
+    ta.dataset.autofocus = "1";
+    b.appendChild(ta);
+    var err = h("p", "err"); err.style.display = "none";
+    b.appendChild(err);
+    var ok = h("button", "btn btn-primary press", "Load it");
+    ok.type = "button";
+    ok.style.marginTop = "12px";
+    ok.addEventListener("click", function(){
+      var r = applyBackup(ta.value);
+      if (r !== true){ err.textContent = r; err.style.display = ""; return; }
+      closeSheet();
+      toast("Backup loaded");
+    });
+    b.appendChild(ok);
+  });
+}
+/* Returns true, or a sentence explaining what is wrong with the text. */
+function applyBackup(text){
+  var o;
+  try { o = JSON.parse(text); }
+  catch (e){ return "That is not a backup file. Check you copied all of it."; }
+  if (!o || typeof o !== "object") return "That file is empty.";
+  var st = o.state && typeof o.state === "object" ? o.state : o;
+  if (!Array.isArray(st.rounds) && !Array.isArray(st.archive))
+    return "That file does not hold any Bukhara scores.";
+  snap("backup loaded");
+  var keep = blank();
+  S = Object.assign(keep, st);
+  if (!Array.isArray(S.teams) || S.teams.length !== 2) S.teams = ["Team one", "Team two"];
+  if (!Array.isArray(S.rounds)) S.rounds = [];
+  if (!Array.isArray(S.archive)) S.archive = [];
+  if (!Array.isArray(S.acked)) S.acked = [false, false];
+  S.rounds = S.rounds.filter(isRound).map(function(r){ return { a: num(r.a), b: num(r.b) }; });
+  if (!S.date) S.date = todayYMD();
+  save();
+  render();
+  return true;
+}
+function openSnaps(){
+  var list = snaps();
+  openSheet(function(b){
+    b.appendChild(h("h2", null, "Restore points"));
+    if (!list.length){
+      b.appendChild(h("p", null, "None yet. One is kept automatically before every change."));
+      return;
+    }
+    b.appendChild(h("p", null, "The last " + MAXSNAP + " states on this device, newest first."));
+    var wrap = h("div", "rowlist");
+    for (var i = list.length - 1; i >= 0; i--){
+      (function(s){
+        var d = new Date(s.t);
+        var when = d.toLocaleDateString(undefined, { day:"numeric", month:"short" }) + " at " +
+                   d.toLocaleTimeString(undefined, { hour:"numeric", minute:"2-digit" });
+        var meta = "";
+        try {
+          var st = JSON.parse(s.data);
+          var t = [0, 0];
+          (st.rounds || []).forEach(function(r){ t[0] += r.a; t[1] += r.b; });
+          meta = t[0] + " to " + t[1] + ", " + (st.rounds || []).length + " rounds";
+          if ((st.archive || []).length) meta += ", " + st.archive.length + " logged";
+        } catch (e){ meta = "saved state"; }
+        rowBtn(wrap, when, s.label + " . " + meta, function(){
+          var r = applyBackup(s.data);
+          if (r === true){ closeSheet(); toast("Restored"); }
+          else toast("That restore point could not be read");
+        });
+      })(list[i]);
+    }
+    b.appendChild(wrap);
+  });
+}
+
+/* ============================ SHARE IMAGE ============================
+   A picture, because a photo shows up straight in a chat with nothing to tap.
+   It cannot be read back in: WhatsApp recompresses images and strips metadata,
+   so anything hidden in the file is destroyed. Never treat it as a backup. */
+function shareCard(){
+  var canvas = drawCard();
+  canvas.toBlob(function(blob){
+    if (!blob){ toast("Could not draw the image"); return; }
+    var file = new File([blob], "bukhara-" + S.date + ".png", { type: "image/png" });
+    if (navigator.canShare && navigator.canShare({ files: [file] }) && navigator.share){
+      navigator.share({ files: [file] }).catch(function(){ /* dismissed */ });
+    } else {
+      var url = URL.createObjectURL(blob);
+      var a = el("dl");
+      a.href = url;
+      a.download = file.name;
+      a.click();
+      setTimeout(function(){ URL.revokeObjectURL(url); }, 4000);
+      toast("Image saved");
+    }
+  }, "image/png");
+}
+
+function drawCard(){
+  var W = 1080;                     // share image width
+  var PAD = 64;
+  var IW = W - PAD * 2;
+  var t = totals();
+  var rec = record();
+  var arch = S.archive;
+  var past = arch.slice(-6);        // past games shown on the share image
+  var hasArch = arch.length > 0;
+  var rowsShown = Math.min(S.rounds.length, 12);
+  var chartH = S.rounds.length ? 300 : 0;
+
+  /* Draw onto a canvas that is certainly tall enough, track where the ink
+     actually ends, then crop to that. Estimating the height up front and
+     getting it slightly wrong silently clips the bottom off the picture,
+     which is exactly the kind of failure nobody notices until it is shared. */
+  var c = document.createElement("canvas");
+  c.width = W; c.height = 4200;
+  var x = c.getContext("2d");
+
+  var INK = "#E9F1EE", INK2 = "#A8BCB6", INK3 = "#7C918C", INK4 = "#768A85";
+  var A = "#E8B04B", B = "#57C4B0", WARN = "#E8734A";
+  var LINE = "rgba(233,241,238,0.11)", PANEL = "#1B2A26";
+  var FONT = '-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif';
+  function f(size, weight){ return (weight || 400) + " " + size + "px " + FONT; }
+  function rr(px, py, pw, ph, r){
+    if (x.roundRect){ x.beginPath(); x.roundRect(px, py, pw, ph, r); return; }
+    r = Math.min(r, pw / 2, ph / 2);
+    x.beginPath();
+    x.moveTo(px + r, py);
+    x.arcTo(px + pw, py, px + pw, py + ph, r);
+    x.arcTo(px + pw, py + ph, px, py + ph, r);
+    x.arcTo(px, py + ph, px, py, r);
+    x.arcTo(px, py, px + pw, py, r);
+    x.closePath();
+  }
+  function hline(y){
+    x.strokeStyle = LINE; x.lineWidth = 1;
+    x.beginPath(); x.moveTo(PAD, y + 0.5); x.lineTo(W - PAD, y + 0.5); x.stroke();
+  }
+  function clip(str, maxW, font){
+    x.font = font;
+    if (x.measureText(str).width <= maxW) return str;
+    var s = str;
+    while (s.length > 1 && x.measureText(s + "…").width > maxW) s = s.slice(0, -1);
+    return s + "…";
+  }
+
+  x.fillStyle = "#0E1A18";
+  x.fillRect(0, 0, W, c.height);
+  x.textBaseline = "alphabetic";
+
+  var y = PAD + 34;
+
+  /* ---- wordmark: the same two rails and target line as the icon ---- */
+  (function(){
+    var s = 44 / 192;               // draw the 192-unit mark at 44px
+    var ox = PAD - 4, oy = y - 34;
+    x.fillStyle = A; rr(ox + 36*s, oy + 78*s, 121*s, 21*s, 10.5*s); x.fill();
+    x.fillStyle = B; rr(ox + 36*s, oy + 112*s, 75*s, 21*s, 10.5*s); x.fill();
+    x.fillStyle = WARN; rr(ox + 134*s, oy + 68*s, 4*s, 74*s, 2*s); x.fill();
+    x.fillStyle = INK; x.font = f(30, 640);
+    x.fillText("Bukhara", PAD + 52, y);
+  })();
+  x.fillStyle = INK3; x.font = f(24, 500);
+  x.textAlign = "right";
+  x.fillText(fmtDateLong(S.date), W - PAD, y);
+  x.textAlign = "left";
+  y += 74;
+
+  /* ---- the two teams, with their rails ---- */
+  for (var i = 0; i < 2; i++){
+    var colour = i === 0 ? A : B;
+    x.fillStyle = INK2; x.font = f(26, 560);
+    x.fillText(clip(S.teams[i], IW - 300, f(26, 560)), PAD, y);
+
+    x.textAlign = "right";
+    x.fillStyle = t[i] < 0 ? WARN : INK;
+    x.font = f(76, 680);
+    x.fillText(String(t[i]), W - PAD, y + 14);
+    x.textAlign = "left";
+    y += 44;
+
+    // rail
+    var railH = 18, railY = y;
+    x.fillStyle = PANEL; rr(PAD, railY, IW, railH, railH / 2); x.fill();
+    var frac = Math.max(0, Math.min(1, t[i] / (TARGET / RAIL_TICK)));
+    if (frac > 0){
+      x.fillStyle = colour;
+      rr(PAD, railY, Math.max(railH, IW * frac), railH, railH / 2);
+      x.fill();
+    }
+    // Ground ring first, so the tick stays visible where a bar has run past it.
+    x.fillStyle = "#0E1A18";
+    rr(PAD + IW * RAIL_TICK - 6, railY - 9, 12, railH + 18, 6);
+    x.fill();
+    x.fillStyle = WARN;
+    rr(PAD + IW * RAIL_TICK - 2.5, railY - 6, 5, railH + 12, 2.5);
+    x.fill();
+    y += railH + 26;
+
+    x.fillStyle = INK4; x.font = f(21, 400);
+    var gap = TARGET - t[i];
+    x.fillText(gap > 0 ? gap + " to go" : "past " + TARGET + " by " + (-gap), PAD, y);
+    var br = bestRound(null, i);
+    if (br !== null && S.rounds.length){
+      x.textAlign = "right";
+      x.fillText("best round " + br, W - PAD, y);
+      x.textAlign = "left";
+    }
+    y += 34;
+    if (i === 0){ hline(y); y += 40; }
+  }
+  y += 12;
+
+  /* ---- running totals chart: same geometry function as the screen ---- */
+  if (chartH){
+    hline(y); y += 44;
+    x.fillStyle = INK3; x.font = f(22, 620);
+    x.fillText("Running totals", PAD, y);
+    y += 22;
+
+    var s = series();
+    var g = chartGeom(s[0], s[1], IW, chartH);
+    var ox = PAD, oy = y;
+
+    // baseline, zero, and the target reference
+    x.strokeStyle = LINE; x.lineWidth = 1.5;
+    x.beginPath(); x.moveTo(ox + g.padL, oy + g.padT + g.ih); x.lineTo(ox + g.padL + g.iw, oy + g.padT + g.ih); x.stroke();
+    if (g.zeroY !== null){
+      x.beginPath(); x.moveTo(ox + g.padL, oy + g.zeroY); x.lineTo(ox + g.padL + g.iw, oy + g.zeroY); x.stroke();
+    }
+    if (g.tgtY !== null){
+      x.save();
+      x.strokeStyle = WARN; x.lineWidth = 2.5; x.setLineDash([4, 12]); x.lineCap = "round";
+      x.beginPath(); x.moveTo(ox + g.padL, oy + g.tgtY); x.lineTo(ox + g.padL + g.iw, oy + g.tgtY); x.stroke();
+      x.restore();
+      // Left of the line, same reason as on screen: the right gutter is the
+      // end labels' territory.
+      x.fillStyle = WARN; x.font = f(20, 620);
+      x.fillText(String(TARGET), ox + g.padL + 2, oy + g.tgtY - 10);
+    }
+
+    function stroke(pts, colour, total){
+      x.strokeStyle = colour; x.lineWidth = 4;
+      x.lineJoin = "round"; x.lineCap = "round";
+      x.beginPath();
+      pts.forEach(function(p, k){
+        if (k === 0) x.moveTo(ox + p[0], oy + p[1]); else x.lineTo(ox + p[0], oy + p[1]);
+      });
+      x.stroke();
+      var last = pts[pts.length - 1];
+      // A ground-coloured ring keeps the two end dots readable where they overlap.
+      x.beginPath(); x.arc(ox + last[0], oy + last[1], 9, 0, Math.PI * 2);
+      x.fillStyle = "#0E1A18"; x.fill();
+      x.beginPath(); x.arc(ox + last[0], oy + last[1], 6.5, 0, Math.PI * 2);
+      x.fillStyle = colour; x.fill();
+      x.fillStyle = colour; x.font = f(21, 660);
+      x.fillText(String(total), ox + last[0] + 14, oy + last[1] + 7);
+    }
+    if (t[0] >= t[1]){ stroke(g.ptsB, B, t[1]); stroke(g.ptsA, A, t[0]); }
+    else { stroke(g.ptsA, A, t[0]); stroke(g.ptsB, B, t[1]); }
+
+    x.fillStyle = INK4; x.font = f(19, 400);
+    x.textAlign = "center";
+    var marks = g.n <= 1 ? [g.n] : [1, Math.round(g.n / 2), g.n];
+    marks.filter(function(v, k, arr){ return v >= 1 && arr.indexOf(v) === k; })
+         .forEach(function(k){ x.fillText(String(k), ox + g.X(k), oy + chartH - 2); });
+    x.textAlign = "left";
+    y += chartH + 30;
+  }
+
+  /* ---- round by round ---- */
+  if (rowsShown){
+    hline(y); y += 44;
+    x.fillStyle = INK3; x.font = f(22, 620);
+    x.fillText("Rounds", PAD, y);
+    if (S.rounds.length > rowsShown){
+      x.textAlign = "right"; x.fillStyle = INK4; x.font = f(20, 400);
+      x.fillText("last " + rowsShown + " of " + S.rounds.length, W - PAD, y);
+      x.textAlign = "left";
+    }
+    y += 30;
+
+    var colA = PAD + IW * 0.52, colB = W - PAD;
+    x.font = f(19, 600); x.fillStyle = A;
+    x.textAlign = "right"; x.fillText(clip(S.teams[0], IW * 0.4, f(19, 600)), colA, y);
+    x.fillStyle = B; x.fillText(clip(S.teams[1], IW * 0.4, f(19, 600)), colB, y);
+    x.textAlign = "left";
+    y += 14;
+
+    var drawCell = function(right, delta, running){
+      x.textAlign = "right";
+      x.fillStyle = running < 0 ? WARN : INK4;
+      x.font = f(18, 400);
+      x.fillText(String(running), right, y);
+      var runW = x.measureText(String(running)).width;
+      x.fillStyle = delta < 0 ? WARN : (delta === 0 ? INK4 : INK);
+      x.font = f(24, 620);
+      x.fillText(sign(delta), right - runW - 18, y);
+      x.textAlign = "left";
+    };
+
+    var ser = series();
+    var start = S.rounds.length - rowsShown;
+    for (var k = S.rounds.length - 1; k >= start; k--){
+      hline(y);
+      y += 36;
+      var r = S.rounds[k];
+      x.fillStyle = INK4; x.font = f(20, 400);
+      x.fillText(String(k + 1), PAD, y);
+      drawCell(colA, r.a, ser[0][k + 1]);
+      drawCell(colB, r.b, ser[1][k + 1]);
+      y += 18;
+    }
+    hline(y);
+    y += 40;
+  }
+
+  /* ---- the series, once there is one ---- */
+  if (hasArch){
+    hline(y); y += 44;
+    x.fillStyle = INK3; x.font = f(22, 620);
+    x.fillText("Series record", PAD, y);
+    y += 76;
+
+    x.font = f(72, 680);
+    x.fillStyle = A;
+    var w0 = x.measureText(String(rec.w[0])).width;
+    x.fillText(String(rec.w[0]), PAD, y);
+    x.fillStyle = INK4; x.font = f(46, 400);
+    var wSep = x.measureText(" / ").width;
+    x.fillText(" / ", PAD + w0, y - 4);
+    x.fillStyle = B; x.font = f(72, 680);
+    x.fillText(String(rec.w[1]), PAD + w0 + wSep, y);
+
+    x.textAlign = "right";
+    x.fillStyle = INK3; x.font = f(21, 400);
+    x.fillText(arch.length + (arch.length === 1 ? " game played" : " games played") +
+               (rec.draws ? ", " + rec.draws + (rec.draws === 1 ? " draw" : " draws") : ""), W - PAD, y - 8);
+    x.textAlign = "left";
+    y += 46;
+
+    // per-team stats
+    var SA = teamStats(0), SB = teamStats(1);
+    var rows = [
+      ["Games won", SA.wins, SB.wins],
+      ["Average game", SA.avg, SB.avg],
+      ["Highest game", SA.high, SB.high],
+      ["Best round", SA.bestR, SB.bestR]
+    ];
+    var cA = PAD + IW * 0.62, cB = W - PAD;
+    hline(y); y += 36;
+    x.font = f(19, 600);
+    x.textAlign = "right";
+    x.fillStyle = A; x.fillText(clip(S.teams[0], IW * 0.3, f(19, 600)), cA, y);
+    x.fillStyle = B; x.fillText(clip(S.teams[1], IW * 0.3, f(19, 600)), cB, y);
+    x.textAlign = "left";
+    y += 20;
+    rows.forEach(function(r){
+      hline(y); y += 36;
+      x.fillStyle = INK3; x.font = f(20, 400);
+      x.fillText(r[0], PAD, y);
+      x.font = f(22, 560); x.fillStyle = INK;
+      x.textAlign = "right";
+      x.fillText(r[1] === null || r[1] === undefined ? "-" : String(r[1]), cA, y);
+      x.fillText(r[2] === null || r[2] === undefined ? "-" : String(r[2]), cB, y);
+      x.textAlign = "left";
+      y += 20;
+    });
+    hline(y); y += 40;
+
+    // past results
+    if (past.length){
+      y += 14;
+      x.fillStyle = INK3; x.font = f(22, 620);
+      x.fillText(past.length === arch.length ? "Past games" : "Last " + past.length + " games", PAD, y);
+      y += 26;
+      for (var p = past.length - 1; p >= 0; p--){
+        var gg = past[p];
+        var gt = gg.totals || totals(gg.rounds);
+        hline(y); y += 36;
+        x.fillStyle = INK2; x.font = f(21, 500);
+        x.fillText(fmtDateLong(gg.date), PAD, y);
+        x.textAlign = "right";
+        x.font = f(24, 620);
+        var s1 = String(gt[0]), sSep = " / ", s2 = String(gt[1]);
+        var w2 = x.measureText(s2).width, wS = x.measureText(sSep).width;
+        x.fillStyle = gt[1] > gt[0] ? B : INK2; x.fillText(s2, W - PAD, y);
+        x.fillStyle = INK4; x.font = f(20, 400); x.fillText(sSep, W - PAD - w2, y);
+        x.font = f(24, 620);
+        x.fillStyle = gt[0] > gt[1] ? A : INK2; x.fillText(s1, W - PAD - w2 - wS, y);
+        x.textAlign = "left";
+        y += 20;
+      }
+      hline(y);
+    }
+  }
+
+  /* Crop to the ink. */
+  var out = document.createElement("canvas");
+  out.width = W;
+  out.height = Math.min(c.height, Math.round(y + PAD));
+  var ox2 = out.getContext("2d");
+  ox2.fillStyle = "#0E1A18";
+  ox2.fillRect(0, 0, out.width, out.height);
+  ox2.drawImage(c, 0, 0);
+  return out;
+}
+
+/* ============================ EVENTS ============================ */
+// Sign pickers, score fields
+qa("[data-sign-btn]").forEach(function(btn){
+  btn.addEventListener("click", function(){
+    var i = btn.getAttribute("data-sign-btn");
+    var cur = q('[data-sf="' + i + '"]').getAttribute("data-sign");
+    setSign(i, cur === "-" ? "+" : "-");
+  });
+});
+qa("[data-num]").forEach(function(input, idx){
+  input.addEventListener("input", function(){
+    // The sign lives in the picker, so the box holds digits only. Typing a
+    // minus is a reasonable thing to try, so flip the picker instead of eating it.
+    if (/[-−]/.test(input.value)) setSign(String(idx), "-");
+    var clean = input.value.replace(/[^0-9]/g, "").slice(0, 4);
+    if (clean !== input.value) input.value = clean;
+    renderDock();
+  });
+  input.addEventListener("keydown", function(e){
+    if (e.key === "Enter"){
+      e.preventDefault();
+      if (idx === 0) q('[data-num="1"]').focus();
+      else { input.blur(); addRound(); }
+    }
+  });
+});
+el("addBtn").addEventListener("click", addRound);
+
+// Team names, rounds, games: one delegated listener each.
+document.addEventListener("click", function(e){
+  var rn = e.target.closest("[data-rename]");
+  if (rn){ renameTeam(+rn.getAttribute("data-rename")); return; }
+  var rd = e.target.closest("[data-round]");
+  if (rd){ editRound(+rd.getAttribute("data-round")); return; }
+  var gm = e.target.closest("[data-game]");
+  if (gm){ editGame(+gm.getAttribute("data-game")); return; }
+});
+
+el("menuBtn").addEventListener("click", openMenu);
+el("dateBtn").addEventListener("click", function(){
+  pickDate(S.date, function(v){
+    S.date = v; save(); render();
+  }, "Game date");
+});
+
+// Tabs
+function setTab(name){
+  document.body.setAttribute("data-tab", name);
+  el("seg").setAttribute("data-tab", name);
+  el("tabPlay").setAttribute("aria-selected", String(name === "play"));
+  el("tabHist").setAttribute("aria-selected", String(name === "history"));
+  el("panePlay").classList.toggle("hide", name !== "play");
+  el("paneHist").classList.toggle("hide", name !== "history");
+  el("dock").classList.toggle("hide", name !== "play");
+  // Re-render the pane being shown so its chart is measured at a real width.
+  if (name === "play") renderChart();
+  window.scrollTo(0, 0);
+}
+el("tabPlay").addEventListener("click", function(){ setTab("play"); });
+el("tabHist").addEventListener("click", function(){ setTab("history"); });
+
+// File load
+el("filePick").addEventListener("change", function(){
+  var file = this.files && this.files[0];
+  this.value = "";
+  if (!file) return;
+  var fr = new FileReader();
+  fr.onload = function(){
+    var r = applyBackup(String(fr.result));
+    closeSheet();
+    toast(r === true ? "Backup loaded" : r);
+  };
+  fr.onerror = function(){ toast("That file could not be read"); };
+  fr.readAsText(file);
+});
+
+// The chart is drawn at a measured pixel width, so it has to be rebuilt when
+// that width changes. Debounced: a rotation fires this many times.
+var rzT = null;
+window.addEventListener("resize", function(){
+  clearTimeout(rzT);
+  rzT = setTimeout(function(){ if (document.body.getAttribute("data-tab") === "play") renderChart(); }, 150);
+});
+
+/* ============================ BOOT ============================ */
+load();
+syncAck();
+setSign("0", "+");
+setSign("1", "+");
+render();
+
+// Nudge about a stale backup once per session, and only when there is
+// something worth losing.
+setTimeout(function(){
+  var hasData = S.rounds.length > 0 || S.archive.length > 0;
+  if (!hasData) return;
+  if (!S.lastBackup) toast("No backup saved yet. Menu, then Backup.");
+  else if (Date.now() - S.lastBackup > MONTH) toast("Last backup was " + ago(S.lastBackup) + ".");
+}, 2500);
+
+if ("serviceWorker" in navigator){
+  window.addEventListener("load", function(){
+    // Relative path, so it works from a project page like /bukhara/.
+    navigator.serviceWorker.register("./sw.js").catch(function(){ /* offline is a bonus, not a requirement */ });
+  });
+}
+</script>
+</body>
+</html>
