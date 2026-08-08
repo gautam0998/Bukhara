@@ -146,6 +146,11 @@ h1{font-family:var(--display);font-weight:800;font-size:19px;letter-spacing:.22e
 .game{border-bottom:1px solid rgba(42,66,61,.55);padding:13px 0;}
 .gtop{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:9px;}
 .bar-row{display:flex;align-items:center;gap:8px;margin-bottom:5px;}
+/* Who the bar belongs to. Each game keeps the names it was played under, so a
+   card from before a rename still reads correctly. Capped at 42% and ellipsised
+   so a long name shortens itself rather than squeezing the bar it labels. */
+.bname{flex:0 1 auto;min-width:0;max-width:42%;font-size:11.5px;font-weight:600;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .track{flex:1;height:9px;background:var(--surface2);border-radius:2px;}
 .bar{height:100%;border-radius:2px;}
 .bval{font-family:var(--mono);font-size:12px;width:52px;text-align:right;font-variant-numeric:tabular-nums;}
@@ -538,12 +543,18 @@ function renderHistory(){
     var g=S.archive[i], f=finals[i];
     var w = f[0]===f[1] ? -1 : (f[0]>f[1] ? 0 : 1);
     h+='<div class="game"><div class="gtop"><span class="mono">Game '+(i+1)+' &middot; '+
-       g.rounds.length+' rounds</span>'+
+       g.rounds.length+(g.rounds.length===1?' round':' rounds')+'</span>'+
        '<span><input type="date" class="dateinput" data-gdate="'+g.id+'" value="'+
        (g.date||'')+'" aria-label="Date of game '+(i+1)+'">'+
        '<button class="x" data-delgame="'+g.id+'" aria-label="Delete game '+(i+1)+'">&times;</button></span></div>';
+    // The names this game was played under, not today's. A game logged as
+    // "Ankit & Gautam" stays that way after the teams are renamed. Older entries
+    // and hand-edited backups may not carry them, so fall back to the current pair.
+    var gn = g.names || S.names;
     for(var t=0;t<2;t++){
-      h+='<div class="bar-row"><div class="track"><div class="bar" style="width:'+
+      h+='<div class="bar-row">'+
+         '<span class="bname" style="color:'+colorOf(t)+'">'+esc(gn[t])+'</span>'+
+         '<div class="track"><div class="bar" style="width:'+
          ((f[t]/peak)*100)+'%;background:'+colorOf(t)+'"></div></div>'+
          '<span class="bval" style="color:'+colorOf(t)+'">'+f[t]+
          (w===t?'<span class="win">W</span>':'')+'</span></div>';
