@@ -5,32 +5,24 @@ running totals, and a flag when a team reaches 1000 and has to change their game
 
 Plain HTML, CSS and JavaScript. No build step, no framework, no backend.
 
-**Live:** https://gautam0998.github.io/bukhara/
+**Live:** https://gautam0998.github.io/Bukhara/ (once Pages is switched on, below)
 
-## Put it online
+Note the capital B. GitHub Pages URLs are case-sensitive in the path, and this repo
+is called `Bukhara`.
 
-1. Create a **public** repo on GitHub - `bukhara` is a fine name.
-2. Upload `index.html`, `manifest.json`, `sw.js`, `icon-180.png`, `icon-192.png`, `icon-512.png`
-   to the root of the repo.
-3. Repo → **Settings** → **Pages** → under *Build and deployment*, set **Source** to
-   *Deploy from a branch*, branch **main**, folder **/ (root)**. Save.
-4. Wait about a minute. The URL appears on that same page:
-   `https://<your-username>.github.io/bukhara/`
+## Turn on Pages
+
+The files are already here. One switch is left:
+
+**Settings** → **Pages** → under *Build and deployment*, set **Source** to
+*Deploy from a branch*, branch **main**, folder **/ (root)**. Save.
+
+Wait about a minute. The URL appears on that same page.
 
 That link is shareable - WhatsApp, anywhere. Anyone can open it, no account needed.
 
-From the command line instead:
-
-```bash
-git init
-git add .
-git commit -m "Bukhara scorekeeper"
-git branch -M main
-git remote add origin git@github.com:<your-username>/bukhara.git
-git push -u origin main
-```
-
-Then do step 3.
+Everything is served from the repo root with relative paths, so it works from a
+project subpath like `/Bukhara/` without any configuration.
 
 ## Install it on your phone
 
